@@ -10,7 +10,7 @@ void main() {
 
     expect(find.text('Welcome'), findsOneWidget);
     expect(find.text('Log In'), findsOneWidget);
-    expect(find.text('Register'), findsOneWidget);
+    expect(find.text('Create account'), findsOneWidget);
     expect(find.text('Forgot password?'), findsOneWidget);
     expect(find.text('Preview mobile demo'), findsNothing);
   });

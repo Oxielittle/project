@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../services/session_service.dart';
 import '../services/api_client.dart';
+import '../services/theme_service.dart';
 import 'ActivityPage.dart';
 import 'AdminUsersPage.dart';
 import 'ArchivePage.dart';
@@ -91,6 +92,22 @@ class _ProfilePageState extends State<ProfilePage> {
                 onTap: () => open(const TeamsPage()),
               ),
             ),
+          ValueListenableBuilder<bool>(
+            valueListenable: ThemeService.lightMode,
+            builder: (_, lightMode, __) => Card(
+              child: SwitchListTile(
+                secondary: Icon(
+                  lightMode
+                      ? Icons.light_mode_outlined
+                      : Icons.dark_mode_outlined,
+                ),
+                title: const Text('Light mode'),
+                subtitle: const Text('Dark navy is the default appearance'),
+                value: lightMode,
+                onChanged: ThemeService.setLightMode,
+              ),
+            ),
+          ),
           if (role == 'admin')
             Card(
               child: ListTile(
