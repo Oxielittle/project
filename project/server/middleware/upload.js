@@ -10,6 +10,6 @@ const storage = multer.diskStorage({
 });
 module.exports = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 25 * 1024 * 1024 },
   fileFilter: (_, file, callback) => callback(null, !file.mimetype.includes('javascript') && !file.mimetype.includes('html')),
 });

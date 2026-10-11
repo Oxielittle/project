@@ -20,6 +20,7 @@ class RealtimeService {
       'task:deleted',
       'project:changed',
       'team:changed',
+      'activity-assignment:changed',
     ]) {
       _socket!.on(event, (_) => onChanged());
     }

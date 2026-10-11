@@ -6,6 +6,7 @@ import '../models/task_item.dart';
 import '../services/task_service.dart';
 import '../services/api_client.dart';
 import '../services/api_config.dart';
+import 'ActivityDetailsPage.dart';
 
 class TaskDetailsPage extends StatefulWidget {
   const TaskDetailsPage({
@@ -211,6 +212,8 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
   @override
   Widget build(BuildContext context) {
     final task = widget.task;
+
+    if (task.isIndividualActivity) return ActivityDetailsPage(task: task);
 
     return Scaffold(
       appBar: AppBar(

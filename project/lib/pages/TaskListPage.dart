@@ -237,8 +237,26 @@ class _TaskCard extends StatelessWidget {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
+                  if (task.isIndividualActivity)
+                    const Chip(
+                      avatar: Icon(Icons.assignment_ind_outlined, size: 16),
+                      label: Text('Individual activity'),
+                      visualDensity: VisualDensity.compact,
+                    ),
                   Chip(
-                    label: Text(task.status.label),
+                    label: Text(
+                      task.isIndividualActivity && task.activityStatus != null
+                          ? task.activityStatus!
+                                .split('-')
+                                .map(
+                                  (part) =>
+                                      '${part[0].toUpperCase()}${part.substring(1)}',
+                                )
+                                .join(' ')
+                          : task.isIndividualActivity
+                          ? 'Activity overview'
+                          : task.status.label,
+                    ),
                     visualDensity: VisualDensity.compact,
                   ),
                   Chip(
@@ -261,9 +279,18 @@ class _TaskCard extends StatelessWidget {
               const SizedBox(height: 8),
               Row(
                 children: [
-                  const Icon(Icons.person_outline, size: 18),
+                  Icon(
+                    task.isIndividualActivity
+                        ? Icons.groups_outlined
+                        : Icons.person_outline,
+                    size: 18,
+                  ),
                   const SizedBox(width: 6),
-                  Text(task.assignee),
+                  Text(
+                    task.isIndividualActivity
+                        ? 'Individual submission'
+                        : task.assignee,
+                  ),
                 ],
               ),
             ],

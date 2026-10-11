@@ -14,11 +14,23 @@ class TaskItem {
     required this.dueDate,
     this.projectId = '',
     this.assigneeId,
+    this.reporterId,
+    this.reporter = '',
+    this.type = 'standard',
+    this.startDate,
+    this.activitySettings = const {},
+    this.activityStatus,
     this.subtasks = const [],
     this.attachments = const [],
   });
   final String id, title, description, project, assignee, projectId;
   final String? assigneeId;
+  final String? reporterId;
+  final String reporter;
+  final String type;
+  final DateTime? startDate;
+  final Map<String, dynamic> activitySettings;
+  final String? activityStatus;
   final TaskPriority priority;
   TaskStatus status;
   final DateTime dueDate;
@@ -26,9 +38,10 @@ class TaskItem {
   final List<Map<String, dynamic>> attachments;
   bool get isOverdue =>
       status != TaskStatus.completed && dueDate.isBefore(DateTime.now());
+  bool get isIndividualActivity => type == 'individual-activity';
 
   factory TaskItem.fromJson(Map<String, dynamic> j) {
-    final p = j['project'], a = j['assignee'];
+    final p = j['project'], a = j['assignee'], r = j['reporter'];
     return TaskItem(
       id: j['_id'] ?? '',
       title: j['title'] ?? '',
@@ -36,6 +49,16 @@ class TaskItem {
       projectId: p is Map ? p['_id'] ?? '' : p ?? '',
       project: p is Map ? p['name'] ?? 'Project' : 'Project',
       assigneeId: a is Map ? a['_id'] : a,
+      reporterId: r is Map ? r['_id']?.toString() : r?.toString(),
+      reporter: r is Map
+          ? '${r['firstName'] ?? ''} ${r['lastName'] ?? ''}'.trim()
+          : '',
+      type: j['type'] ?? 'standard',
+      startDate: DateTime.tryParse(j['startDate'] ?? ''),
+      activitySettings: Map<String, dynamic>.from(
+        j['activitySettings'] is Map ? j['activitySettings'] : const {},
+      ),
+      activityStatus: j['myAssignmentStatus']?.toString(),
       assignee: a is Map
           ? '${a['firstName'] ?? ''} ${a['lastName'] ?? ''}'.trim()
           : 'Unassigned',

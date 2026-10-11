@@ -1,4 +1,5 @@
 import '../models/task_item.dart';
+import '../models/activity_assignment.dart';
 import 'api_client.dart';
 
 class TaskService {
@@ -24,6 +25,61 @@ class TaskService {
           (await ApiClient.post('/tasks', body))['item'],
         ),
       );
+  static Future<TaskItem> createActivity(Map<String, dynamic> body) async =>
+      TaskItem.fromJson(
+        Map<String, dynamic>.from(
+          (await ApiClient.post('/activities', body))['item'],
+        ),
+      );
+  static Future<ActivityAssignment> myActivityAssignment(String id) async =>
+      ActivityAssignment.fromJson(
+        Map<String, dynamic>.from(
+          (await ApiClient.get('/activities/$id/my-assignment'))['item'],
+        ),
+      );
+  static Future<Map<String, dynamic>> activityAssignments(
+    String id, {
+    String? status,
+  }) async => Map<String, dynamic>.from(
+    await ApiClient.get(
+      '/activities/$id/assignments${status == null || status.isEmpty ? '' : '?status=$status'}',
+    ),
+  );
+  static Future<ActivityAssignment> startAssignment(String id) async =>
+      ActivityAssignment.fromJson(
+        Map<String, dynamic>.from(
+          (await ApiClient.patch(
+            '/activity-assignments/$id/start',
+            const {},
+          ))['item'],
+        ),
+      );
+  static Future<ActivityAssignment> submitAssignment(
+    String id,
+    String textResponse,
+  ) async => ActivityAssignment.fromJson(
+    Map<String, dynamic>.from(
+      (await ApiClient.post('/activity-assignments/$id/submit', {
+        'textResponse': textResponse,
+      }))['item'],
+    ),
+  );
+  static Future<ActivityAssignment> reviewAssignment(
+    String id, {
+    required String status,
+    String feedback = '',
+    num? score,
+  }) async => ActivityAssignment.fromJson(
+    Map<String, dynamic>.from(
+      (await ApiClient.patch('/activity-assignments/$id/review', {
+        'status': status,
+        'feedback': feedback,
+        if (score != null) 'score': score,
+      }))['item'],
+    ),
+  );
+  static Future<String> remindActivity(String id) async =>
+      (await ApiClient.post('/activities/$id/remind', const {}))['message'];
   static Future<TaskItem> update(String id, Map<String, dynamic> body) async =>
       TaskItem.fromJson(
         Map<String, dynamic>.from(
