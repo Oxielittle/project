@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
+import 'AppShell.dart';
 import 'RegistrationPage.dart';
+import 'ForgotPasswordPage.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -44,9 +46,10 @@ class _LoginPageState extends State<LoginPage> {
         SnackBar(content: Text(result['message'] ?? 'Login successful.')),
       );
 
-      print('Logged in user: ${result['user']}');
-
-      // We will navigate to the next page here later.
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const AppShell()),
+      );
     } catch (error) {
       if (!mounted) return;
 
@@ -137,6 +140,18 @@ class _LoginPageState extends State<LoginPage> {
                       style: TextStyle(fontSize: 16),
                     ),
                   ),
+                ),
+
+                const SizedBox(height: 12),
+
+                TextButton(
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const ForgotPasswordPage(),
+                    ),
+                  ),
+                  child: const Text('Forgot password?'),
                 ),
               ],
             ),

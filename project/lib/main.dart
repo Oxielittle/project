@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'pages/LoginPage.dart';
+import 'pages/AuthGate.dart';
 
 void main() {
   runApp(const MyApp());
@@ -13,12 +13,15 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Login App',
+      title: 'Task Management System',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF3155D9)),
         useMaterial3: true,
+        inputDecorationTheme: const InputDecorationTheme(
+          border: OutlineInputBorder(),
+        ),
       ),
-      home: const LoginPage(),
+      home: const AuthGate(),
     );
   }
 }

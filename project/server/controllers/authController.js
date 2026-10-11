@@ -1,9 +1,15 @@
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const Auth = require('../models/authModel');
+const { logActivity } = require('../services/activity');
+const crypto = require('crypto');
+const { sendResetEmail } = require('../services/mail');
+
+const safeUser = (user) => ({ id: user._id, firstName: user.firstName, lastName: user.lastName, birthday: user.birthday, username: user.username, email: user.email, phone: user.phone, role: user.role, avatarUrl: user.avatarUrl });
+const tokenFor = (user) => jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET || 'development-secret', { expiresIn: '7d' });
 
 const registerUser = async (req, res) => {
 try {
-    console.log('Register request received:', req.body);
 const {
 firstName,
 lastName,
@@ -78,15 +84,8 @@ password
 
     return res.status(201).json({
         message: 'Registration successful.',
-        user: {
-            id: newUser._id,
-            firstName: newUser.firstName,
-            lastName: newUser.lastName,
-            birthday: newUser.birthday,
-            username: newUser.username,
-            email: newUser.email,
-            phone: newUser.phone
-        }
+        token: tokenFor(newUser),
+        user: safeUser(newUser)
     });
 
 } catch (error) {
@@ -139,18 +138,15 @@ const { usernameOrEmail, password } = req.body;
         });
     }
 
+    if (user.isArchived) return res.status(403).json({ message: 'This account has been archived.' });
+
+    await logActivity(user._id, 'LOGIN', 'User', user._id);
+
     // Successful login
     return res.status(200).json({
         message: 'Login successful.',
-        user: {
-            id: user._id,
-            firstName: user.firstName,
-            lastName: user.lastName,
-            birthday: user.birthday,
-            username: user.username,
-            email: user.email,
-            phone: user.phone
-        }
+        token: tokenFor(user),
+        user: safeUser(user)
     });
 
 } catch (error) {
@@ -166,5 +162,50 @@ const { usernameOrEmail, password } = req.body;
 
 module.exports = {
 registerUser,
-loginUser
+loginUser,
+getMe: (req, res) => res.json({ user: req.user }),
+updateMe: async (req, res, next) => {
+  try {
+    const allowed = ['firstName', 'lastName', 'phone', 'avatarUrl'];
+    allowed.forEach((key) => { if (req.body[key] !== undefined) req.user[key] = req.body[key]; });
+    await req.user.save();
+    res.json({ message: 'Profile updated.', user: safeUser(req.user) });
+  } catch (error) { next(error); }
+},
+changePassword: async (req, res, next) => {
+  try {
+    const user = await Auth.findById(req.user._id);
+    if (!await bcrypt.compare(req.body.currentPassword || '', user.password)) return res.status(400).json({ message: 'Current password is incorrect.' });
+    if (!req.body.newPassword || req.body.newPassword.length < 8) return res.status(400).json({ message: 'New password must contain at least 8 characters.' });
+    user.password = await bcrypt.hash(req.body.newPassword, 10);
+    await user.save();
+    res.json({ message: 'Password changed.' });
+  } catch (error) { next(error); }
+},
+forgotPassword: async (req, res, next) => {
+  try {
+    const user = await Auth.findOne({ email: String(req.body.email || '').toLowerCase() });
+    let resetToken;
+    if (user) {
+      resetToken = crypto.randomBytes(24).toString('hex');
+      user.resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+      user.resetPasswordExpires = Date.now() + 30 * 60 * 1000;
+      await user.save();
+      await sendResetEmail(user.email, resetToken);
+    }
+    res.json({ message: 'If the account exists, a reset code has been created.', ...(process.env.NODE_ENV !== 'production' && resetToken ? { resetToken } : {}) });
+  } catch (error) { next(error); }
+},
+resetPassword: async (req, res, next) => {
+  try {
+    const hashed = crypto.createHash('sha256').update(String(req.body.token || '')).digest('hex');
+    const user = await Auth.findOne({ resetPasswordToken: hashed, resetPasswordExpires: { $gt: Date.now() } });
+    if (!user) return res.status(400).json({ message: 'Reset code is invalid or expired.' });
+    if (!req.body.password || req.body.password.length < 8) return res.status(400).json({ message: 'Password must contain at least 8 characters.' });
+    user.password = await bcrypt.hash(req.body.password, 10);
+    user.resetPasswordToken = undefined; user.resetPasswordExpires = undefined;
+    await user.save();
+    res.json({ message: 'Password reset successfully.' });
+  } catch (error) { next(error); }
+}
 };
