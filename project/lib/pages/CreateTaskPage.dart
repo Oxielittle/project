@@ -27,8 +27,14 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
     text: 'pdf, doc, docx, jpg, jpeg, png',
   );
   final _recipientSearch = TextEditingController();
+  final _tags = TextEditingController();
+  final _category = TextEditingController();
+  final _subtask = TextEditingController();
   List<Map<String, dynamic>> _projects = [], _users = [];
+  List<TaskItem> _tasks = [];
   final Set<String> _recipients = {};
+  final Set<String> _collaborators = {}, _watchers = {}, _dependencies = {};
+  final List<String> _subtasks = [];
   final List<PlatformFile> _referenceFiles = [];
   String? _projectId, _assigneeId;
   bool _loading = true, _saving = false, _isActivity = false;
@@ -38,6 +44,8 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
   TaskStatus _status = TaskStatus.todo;
   DateTime _dueDate = DateTime.now().add(const Duration(days: 7));
   DateTime _startDate = DateTime.now();
+  String _recurrence = 'none';
+  int _recurrenceInterval = 1, _recurrenceCount = 2;
 
   @override
   void initState() {
@@ -56,11 +64,13 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
       final results = await Future.wait([
         TaskService.projects(),
         TaskService.users(),
+        TaskService.list(),
       ]);
       if (mounted)
         setState(() {
-          _projects = results[0];
-          _users = results[1];
+          _projects = results[0] as List<Map<String, dynamic>>;
+          _users = results[1] as List<Map<String, dynamic>>;
+          _tasks = results[2] as List<TaskItem>;
           _loading = false;
         });
     } catch (_) {
@@ -74,6 +84,9 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
     _description.dispose();
     _allowedTypes.dispose();
     _recipientSearch.dispose();
+    _tags.dispose();
+    _category.dispose();
+    _subtask.dispose();
     super.dispose();
   }
 
@@ -92,6 +105,11 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
           (value) => value is Map ? value['_id'].toString() : value.toString(),
         )
         .toSet();
+    final manager = project['manager'];
+    if (manager != null)
+      members.add(
+        manager is Map ? manager['_id'].toString() : manager.toString(),
+      );
     final query = _recipientSearch.text.trim().toLowerCase();
     return _users.where((user) {
       final name =
@@ -136,6 +154,7 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
         'description': _description.text.trim(),
         'project': _projectId,
         'priority': _priority.name,
+        'startDate': _startDate.toIso8601String(),
         'deadline': _dueDate.toIso8601String(),
       };
       final task = _isActivity
@@ -160,9 +179,26 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
           : await TaskService.create({
               ...common,
               'assignee': _assigneeId,
+              'collaborators': _collaborators.toList(),
+              'watchers': _watchers.toList(),
+              'subtasks': _subtasks
+                  .map((title) => {'title': title, 'completed': false})
+                  .toList(),
+              'tags': _tags.text
+                  .split(',')
+                  .map((value) => value.trim())
+                  .where((value) => value.isNotEmpty)
+                  .toList(),
+              'category': _category.text.trim(),
+              'dependencies': _dependencies.toList(),
+              'recurrence': {
+                'frequency': _recurrence,
+                'interval': _recurrenceInterval,
+                'count': _recurrenceCount,
+              },
               'status': _status.api,
             });
-      if (_isActivity) {
+      if (_referenceFiles.isNotEmpty) {
         var failedUploads = 0;
         for (final file in _referenceFiles) {
           if (file.bytes == null) continue;
@@ -179,7 +215,7 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
         }
         if (failedUploads > 0 && mounted) {
           _message(
-            'Activity created, but $failedUploads reference file(s) failed to upload.',
+            '${_isActivity ? 'Activity' : 'Task'} created, but $failedUploads file(s) failed to upload.',
           );
         }
       }
@@ -270,6 +306,7 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
                 _projectId = value;
                 _assigneeId = null;
                 _recipients.clear();
+                _dependencies.clear();
               }),
             ),
           const SizedBox(height: 16),
@@ -282,7 +319,7 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
                 labelText: 'Assignee',
                 prefixIcon: Icon(Icons.person_outline),
               ),
-              items: _users
+              items: _eligibleUsers
                   .map(
                     (u) => DropdownMenuItem(
                       value: u['_id'].toString(),
@@ -319,17 +356,18 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
             ),
           ],
           const SizedBox(height: 16),
-          if (_isActivity) ...[
-            _dateTile('Start date', _startDate, () => _pickDate(true)),
-            const SizedBox(height: 12),
-          ],
+          _dateTile('Start date', _startDate, () => _pickDate(true)),
+          const SizedBox(height: 12),
           _dateTile('Deadline', _dueDate, () => _pickDate(false)),
           if (_isActivity) ...[
             const SizedBox(height: 20),
             _settings(),
-            const SizedBox(height: 16),
-            _referencePicker(),
+          ] else ...[
+            const SizedBox(height: 20),
+            _standardSettings(),
           ],
+          const SizedBox(height: 16),
+          _referencePicker(),
           const SizedBox(height: 28),
           FilledButton.icon(
             onPressed: _saving ? null : _save,
@@ -492,6 +530,176 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
         ],
       ),
     ),
+  );
+
+  Widget _standardSettings() => Card(
+    margin: EdgeInsets.zero,
+    child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Task options',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _category,
+            decoration: const InputDecoration(
+              labelText: 'Category',
+              prefixIcon: Icon(Icons.category_outlined),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _tags,
+            decoration: const InputDecoration(
+              labelText: 'Tags',
+              helperText: 'Comma-separated',
+              prefixIcon: Icon(Icons.sell_outlined),
+            ),
+          ),
+          const SizedBox(height: 12),
+          _multiSelectTile('Collaborators', _collaborators, _eligibleUsers),
+          _multiSelectTile('Watchers', _watchers, _eligibleUsers),
+          const Divider(height: 28),
+          const Text('Subtasks', style: TextStyle(fontWeight: FontWeight.bold)),
+          ..._subtasks.map(
+            (title) => ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(title),
+              leading: const Icon(Icons.check_box_outline_blank),
+              trailing: IconButton(
+                onPressed: () => setState(() => _subtasks.remove(title)),
+                icon: const Icon(Icons.close),
+              ),
+            ),
+          ),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _subtask,
+                  decoration: const InputDecoration(hintText: 'Add a subtask'),
+                ),
+              ),
+              IconButton(
+                onPressed: () {
+                  final value = _subtask.text.trim();
+                  if (value.isNotEmpty)
+                    setState(() {
+                      _subtasks.add(value);
+                      _subtask.clear();
+                    });
+                },
+                icon: const Icon(Icons.add),
+              ),
+            ],
+          ),
+          const Divider(height: 28),
+          const Text(
+            'Dependencies',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          if (_tasks
+              .where(
+                (task) =>
+                    task.projectId == _projectId && !task.isIndividualActivity,
+              )
+              .isEmpty)
+            const Text('No existing Standard Tasks in this project.'),
+          ..._tasks
+              .where(
+                (task) =>
+                    task.projectId == _projectId && !task.isIndividualActivity,
+              )
+              .map(
+                (task) => CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _dependencies.contains(task.id),
+                  title: Text(task.title),
+                  subtitle: Text(task.status.label),
+                  onChanged: (value) => setState(() {
+                    if (value == true) {
+                      _dependencies.add(task.id);
+                    } else {
+                      _dependencies.remove(task.id);
+                    }
+                  }),
+                ),
+              ),
+          const Divider(height: 28),
+          DropdownButtonFormField<String>(
+            initialValue: _recurrence,
+            decoration: const InputDecoration(
+              labelText: 'Repeat',
+              prefixIcon: Icon(Icons.repeat),
+            ),
+            items: const [
+              DropdownMenuItem(value: 'none', child: Text('Does not repeat')),
+              DropdownMenuItem(value: 'daily', child: Text('Daily')),
+              DropdownMenuItem(value: 'weekly', child: Text('Weekly')),
+              DropdownMenuItem(value: 'monthly', child: Text('Monthly')),
+            ],
+            onChanged: (value) => setState(() => _recurrence = value!),
+          ),
+          if (_recurrence != 'none') ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    initialValue: '1',
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Repeat every',
+                    ),
+                    onChanged: (value) =>
+                        _recurrenceInterval = int.tryParse(value) ?? 1,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextFormField(
+                    initialValue: '2',
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Occurrences'),
+                    onChanged: (value) =>
+                        _recurrenceCount = int.tryParse(value) ?? 1,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    ),
+  );
+
+  Widget _multiSelectTile(
+    String title,
+    Set<String> selected,
+    List<Map<String, dynamic>> users,
+  ) => ExpansionTile(
+    tilePadding: EdgeInsets.zero,
+    title: Text(title),
+    subtitle: Text('${selected.length} selected'),
+    children: users.map((user) {
+      final id = user['_id'].toString();
+      return CheckboxListTile(
+        contentPadding: EdgeInsets.zero,
+        value: selected.contains(id),
+        title: Text(_name(user)),
+        onChanged: (value) => setState(() {
+          if (value == true) {
+            selected.add(id);
+          } else {
+            selected.remove(id);
+          }
+        }),
+      );
+    }).toList(),
   );
 
   Widget _referencePicker() => Card(

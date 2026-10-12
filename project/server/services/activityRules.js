@@ -2,6 +2,7 @@ const submissionError = ({ activity, assignment, textResponse = '', now = new Da
   const settings = activity.activitySettings || {};
   if (activity.startDate && new Date(activity.startDate) > now) return 'This activity has not started.';
   if (assignment.status === 'accepted') return 'An accepted submission cannot be changed.';
+  if (assignment.status === 'cancelled') return 'This assignment is cancelled.';
   if (assignment.submissionCount && !settings.allowResubmission) return 'Resubmission is disabled.';
   if (assignment.submissionCount >= (settings.maxSubmissions || 1)) return 'Submission limit reached.';
   if (settings.requireAttachment && !assignment.attachments.length) return 'At least one attachment is required.';

@@ -276,6 +276,70 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
             value:
                 '${task.dueDate.month}/${task.dueDate.day}/${task.dueDate.year}',
           ),
+          if (task.startDate != null)
+            _InfoTile(
+              icon: Icons.play_circle_outline,
+              label: 'Start date',
+              value:
+                  '${task.startDate!.month}/${task.startDate!.day}/${task.startDate!.year}',
+            ),
+          if (task.category.isNotEmpty)
+            _InfoTile(
+              icon: Icons.category_outlined,
+              label: 'Category',
+              value: task.category,
+            ),
+          if (task.tags.isNotEmpty)
+            Wrap(
+              spacing: 8,
+              children: task.tags.map((tag) => Chip(label: Text(tag))).toList(),
+            ),
+          if (task.collaborators.isNotEmpty)
+            _InfoTile(
+              icon: Icons.group_outlined,
+              label: 'Collaborators',
+              value: task.collaborators.map(_personName).join(', '),
+            ),
+          if (task.watchers.isNotEmpty)
+            _InfoTile(
+              icon: Icons.visibility_outlined,
+              label: 'Watchers',
+              value: task.watchers.map(_personName).join(', '),
+            ),
+          if (task.dependencies.isNotEmpty)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Blocked by',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    ...task.dependencies.map(
+                      (dependency) => ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                          dependency['status'] == 'completed'
+                              ? Icons.check_circle
+                              : Icons.lock_clock,
+                        ),
+                        title: Text(dependency['title'] ?? 'Task'),
+                        subtitle: Text(dependency['status'] ?? 'todo'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          if ((task.recurrence['frequency'] ?? 'none') != 'none')
+            _InfoTile(
+              icon: Icons.repeat,
+              label: 'Recurrence',
+              value:
+                  'Every ${task.recurrence['interval'] ?? 1} ${task.recurrence['frequency']} (${task.recurrence['count'] ?? 1} occurrences)',
+            ),
           const Divider(height: 32),
           const Text(
             'Description',
@@ -418,4 +482,9 @@ class _InfoTile extends StatelessWidget {
       ),
     );
   }
+}
+
+String _personName(Map<String, dynamic> user) {
+  final name = '${user['firstName'] ?? ''} ${user['lastName'] ?? ''}'.trim();
+  return name.isEmpty ? 'Member' : name;
 }

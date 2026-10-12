@@ -237,6 +237,424 @@ class _ActivityDetailsPageState extends State<ActivityDetailsPage> {
     _message(await TaskService.remindActivity(widget.task.id));
   });
 
+  Future<void> _editActivity() async {
+    final title = TextEditingController(text: widget.task.title);
+    final description = TextEditingController(text: widget.task.description);
+    final maxSubmissions = TextEditingController(
+      text: '${widget.task.activitySettings['maxSubmissions'] ?? 3}',
+    );
+    final maxFileSize = TextEditingController(
+      text: '${widget.task.activitySettings['maxFileSizeMB'] ?? 10}',
+    );
+    final maximumScore = TextEditingController(
+      text: '${widget.task.activitySettings['maximumScore'] ?? 100}',
+    );
+    final allowedTypes = TextEditingController(
+      text:
+          (widget.task.activitySettings['allowedFileTypes'] as List? ??
+                  const [])
+              .join(', '),
+    );
+    var allowText = widget.task.activitySettings['allowTextResponse'] != false;
+    var requireAttachment =
+        widget.task.activitySettings['requireAttachment'] == true;
+    var allowResubmission =
+        widget.task.activitySettings['allowResubmission'] != false;
+    var startDate = widget.task.startDate ?? DateTime.now();
+    var priority = widget.task.priority;
+    var deadline = widget.task.dueDate;
+    final save =
+        await showDialog<bool>(
+          context: context,
+          builder: (context) => StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              title: const Text('Edit activity'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: title,
+                      decoration: const InputDecoration(labelText: 'Title'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: description,
+                      maxLines: 4,
+                      decoration: const InputDecoration(
+                        labelText: 'Instructions',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Start date'),
+                      subtitle: Text(_date(startDate)),
+                      trailing: const Icon(Icons.edit_calendar),
+                      onTap: () async {
+                        final value = await showDatePicker(
+                          context: context,
+                          initialDate: startDate,
+                          firstDate: DateTime.now().subtract(
+                            const Duration(days: 365),
+                          ),
+                          lastDate: DateTime.now().add(
+                            const Duration(days: 730),
+                          ),
+                        );
+                        if (value != null) {
+                          setDialogState(() => startDate = value);
+                        }
+                      },
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Deadline'),
+                      subtitle: Text(_date(deadline)),
+                      trailing: const Icon(Icons.edit_calendar),
+                      onTap: () async {
+                        final value = await showDatePicker(
+                          context: context,
+                          initialDate: deadline,
+                          firstDate: DateTime.now().subtract(
+                            const Duration(days: 365),
+                          ),
+                          lastDate: DateTime.now().add(
+                            const Duration(days: 730),
+                          ),
+                        );
+                        if (value != null)
+                          setDialogState(() => deadline = value);
+                      },
+                    ),
+                    DropdownButtonFormField<TaskPriority>(
+                      initialValue: priority,
+                      decoration: const InputDecoration(labelText: 'Priority'),
+                      items: TaskPriority.values
+                          .map(
+                            (value) => DropdownMenuItem(
+                              value: value,
+                              child: Text(value.name.toUpperCase()),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value != null) {
+                          setDialogState(() => priority = value);
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Allow text response'),
+                      value: allowText,
+                      onChanged: (value) =>
+                          setDialogState(() => allowText = value),
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Require attachment'),
+                      value: requireAttachment,
+                      onChanged: (value) =>
+                          setDialogState(() => requireAttachment = value),
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Allow resubmission'),
+                      value: allowResubmission,
+                      onChanged: (value) =>
+                          setDialogState(() => allowResubmission = value),
+                    ),
+                    TextField(
+                      controller: maxSubmissions,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Maximum submissions',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: maxFileSize,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Maximum file size (MB)',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: maximumScore,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Maximum score',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: allowedTypes,
+                      decoration: const InputDecoration(
+                        labelText: 'Allowed file types',
+                        hintText: 'pdf, docx, jpg',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Save'),
+                ),
+              ],
+            ),
+          ),
+        ) ??
+        false;
+    if (save)
+      await _perform(() async {
+        final settings = {
+          ...widget.task.activitySettings,
+          'allowTextResponse': allowText,
+          'requireAttachment': requireAttachment,
+          'allowResubmission': allowResubmission,
+          'maxSubmissions': int.tryParse(maxSubmissions.text) ?? 3,
+          'maxFileSizeMB': int.tryParse(maxFileSize.text) ?? 10,
+          'maximumScore': int.tryParse(maximumScore.text) ?? 100,
+          'allowedFileTypes': allowedTypes.text
+              .split(',')
+              .map((value) => value.trim().toLowerCase())
+              .where((value) => value.isNotEmpty)
+              .toList(),
+        };
+        final updated = await TaskService.updateActivity(widget.task.id, {
+          'title': title.text.trim(),
+          'description': description.text.trim(),
+          'startDate': startDate.toIso8601String(),
+          'deadline': deadline.toIso8601String(),
+          'priority': priority.name,
+          'activitySettings': settings,
+        });
+        widget.task.title = updated.title;
+        widget.task.description = updated.description;
+        widget.task.startDate = updated.startDate;
+        widget.task.dueDate = updated.dueDate;
+        widget.task.activitySettings = updated.activitySettings;
+      });
+    title.dispose();
+    description.dispose();
+    maxSubmissions.dispose();
+    maxFileSize.dispose();
+    maximumScore.dispose();
+    allowedTypes.dispose();
+  }
+
+  Future<void> _addRecipients() async {
+    final results = await Future.wait([
+      TaskService.users(),
+      TaskService.projects(),
+    ]);
+    final allUsers = results[0];
+    final projects = results[1];
+    final project = projects.cast<Map<String, dynamic>?>().firstWhere(
+      (value) => value?['_id'].toString() == widget.task.projectId,
+      orElse: () => null,
+    );
+    final memberIds = (project?['members'] as List? ?? const [])
+        .map(
+          (value) => value is Map ? value['_id'].toString() : value.toString(),
+        )
+        .toSet();
+    final users = allUsers
+        .where((user) => memberIds.contains(user['_id'].toString()))
+        .toList();
+    final existing = _assignments.map((item) => item.recipientId).toSet();
+    final selected = <String>{};
+    if (!mounted) return;
+    final add =
+        await showDialog<bool>(
+          context: context,
+          builder: (context) => StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              title: const Text('Add recipients'),
+              content: SizedBox(
+                width: 420,
+                child: ListView(
+                  shrinkWrap: true,
+                  children: users
+                      .where(
+                        (user) => !existing.contains(user['_id'].toString()),
+                      )
+                      .map((user) {
+                        final id = user['_id'].toString();
+                        return CheckboxListTile(
+                          value: selected.contains(id),
+                          title: Text(
+                            '${user['firstName'] ?? ''} ${user['lastName'] ?? ''}'
+                                .trim(),
+                          ),
+                          subtitle: Text(user['email'] ?? ''),
+                          onChanged: (value) => setDialogState(() {
+                            if (value == true) {
+                              selected.add(id);
+                            } else {
+                              selected.remove(id);
+                            }
+                          }),
+                        );
+                      })
+                      .toList(),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: selected.isEmpty
+                      ? null
+                      : () => Navigator.pop(context, true),
+                  child: const Text('Add'),
+                ),
+              ],
+            ),
+          ),
+        ) ??
+        false;
+    if (add)
+      await _perform(
+        () => TaskService.addActivityRecipients(
+          widget.task.id,
+          selected.toList(),
+        ),
+      );
+  }
+
+  Future<void> _removeRecipient(ActivityAssignment item) => _perform(
+    () => TaskService.removeActivityRecipient(widget.task.id, item.recipientId),
+  );
+
+  Future<void> _reopen({ActivityAssignment? item}) async {
+    final reason = TextEditingController();
+    var deadline = widget.task.dueDate.isAfter(DateTime.now())
+        ? widget.task.dueDate
+        : DateTime.now().add(const Duration(days: 7));
+    final confirmed =
+        await showDialog<bool>(
+          context: context,
+          builder: (context) => StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              title: Text(
+                item == null
+                    ? 'Reopen closed assignments'
+                    : 'Reopen ${item.recipient}',
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: reason,
+                    decoration: const InputDecoration(labelText: 'Reason'),
+                  ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('New deadline'),
+                    subtitle: Text(_date(deadline)),
+                    onTap: () async {
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: deadline,
+                        firstDate: DateTime.now(),
+                        lastDate: DateTime.now().add(const Duration(days: 730)),
+                      );
+                      if (date != null) setDialogState(() => deadline = date);
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Reopen'),
+                ),
+              ],
+            ),
+          ),
+        ) ??
+        false;
+    if (confirmed)
+      await _perform(() async {
+        final count = await TaskService.reopenActivity(
+          widget.task.id,
+          assignmentIds: item == null ? null : [item.id],
+          deadline: deadline,
+          reason: reason.text.trim(),
+        );
+        widget.task.dueDate = deadline;
+        _message('$count assignment(s) reopened.');
+      });
+    reason.dispose();
+  }
+
+  Future<void> _exportResults() async {
+    try {
+      final bytes = await ApiClient.download(
+        '/activities/${widget.task.id}/export.csv',
+      );
+      await FilePicker.platform.saveFile(
+        dialogTitle: 'Save activity results',
+        fileName:
+            '${widget.task.title.replaceAll(RegExp(r'[^A-Za-z0-9]+'), '-')}-results.csv',
+        bytes: bytes,
+      );
+    } catch (error) {
+      if (mounted) _message(error.toString());
+    }
+  }
+
+  Future<void> _archiveOrCancel(bool cancel) async {
+    if (cancel) {
+      final reason = TextEditingController();
+      final confirmed =
+          await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('Cancel activity?'),
+              content: TextField(
+                controller: reason,
+                decoration: const InputDecoration(labelText: 'Reason'),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Keep activity'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Cancel activity'),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+      if (confirmed)
+        await _perform(
+          () => TaskService.cancelActivity(widget.task.id, reason.text.trim()),
+        );
+      reason.dispose();
+    } else
+      await _perform(() => TaskService.archiveActivity(widget.task.id, true));
+    if (mounted) Navigator.pop(context);
+  }
+
   List<ActivityAssignment> get _visibleAssignments {
     final query = _reviewSearch.text.trim().toLowerCase();
     final values = _assignments
@@ -263,6 +681,31 @@ class _ActivityDetailsPageState extends State<ActivityDetailsPage> {
           onPressed: _loading ? null : _load,
           icon: const Icon(Icons.refresh),
         ),
+        if (_reviewerView)
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              if (value == 'edit') _editActivity();
+              if (value == 'add') _addRecipients();
+              if (value == 'reopen') _reopen();
+              if (value == 'export') _exportResults();
+              if (value == 'archive') _archiveOrCancel(false);
+              if (value == 'cancel') _archiveOrCancel(true);
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: 'edit',
+                child: Text('Edit activity / deadline'),
+              ),
+              PopupMenuItem(value: 'add', child: Text('Add recipients')),
+              PopupMenuItem(
+                value: 'reopen',
+                child: Text('Reopen closed assignments'),
+              ),
+              PopupMenuItem(value: 'export', child: Text('Export results CSV')),
+              PopupMenuItem(value: 'archive', child: Text('Archive activity')),
+              PopupMenuItem(value: 'cancel', child: Text('Cancel activity')),
+            ],
+          ),
       ],
     ),
     body: _loading
@@ -358,7 +801,12 @@ class _ActivityDetailsPageState extends State<ActivityDetailsPage> {
     final item = _mine!;
     final settings = widget.task.activitySettings;
     final canSubmit =
-        ['assigned', 'in-progress', 'returned'].contains(item.status) ||
+        [
+          'assigned',
+          'in-progress',
+          'returned',
+          'reopened',
+        ].contains(item.status) ||
         (settings['allowResubmission'] == true &&
             [
               'submitted',
@@ -517,8 +965,10 @@ class _ActivityDetailsPageState extends State<ActivityDetailsPage> {
                     'submitted',
                     'late',
                     'returned',
+                    'reopened',
                     'resubmitted',
                     'accepted',
+                    'cancelled',
                   ]
                   .map(
                     (status) => ChoiceChip(
@@ -656,6 +1106,17 @@ class _ActivityDetailsPageState extends State<ActivityDetailsPage> {
                       ),
                     ],
                   ),
+                if (item.status == 'accepted' || item.status == 'cancelled')
+                  OutlinedButton.icon(
+                    onPressed: _busy ? null : () => _reopen(item: item),
+                    icon: const Icon(Icons.lock_open_outlined),
+                    label: const Text('Reopen assignment'),
+                  ),
+                TextButton.icon(
+                  onPressed: _busy ? null : () => _removeRecipient(item),
+                  icon: const Icon(Icons.person_remove_outlined),
+                  label: const Text('Remove recipient'),
+                ),
               ],
             ),
           ),

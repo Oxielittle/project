@@ -54,6 +54,31 @@ void main() {
     expect(find.text('Assignee'), findsNothing);
   });
 
+  testWidgets('standard task form exposes advanced creation options', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CreateTaskPage(
+          onCreate: (_) {},
+          initialProjects: const [],
+          initialUsers: const [],
+        ),
+      ),
+    );
+    await tester.scrollUntilVisible(
+      find.text('Task options'),
+      500,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Task options'), findsOneWidget);
+    expect(find.text('Collaborators'), findsOneWidget);
+    expect(find.text('Watchers'), findsOneWidget);
+    expect(find.text('Subtasks'), findsOneWidget);
+    expect(find.text('Dependencies'), findsOneWidget);
+    expect(find.text('Repeat'), findsOneWidget);
+  });
+
   testWidgets('recipient submission screen shows private response controls', (
     tester,
   ) async {

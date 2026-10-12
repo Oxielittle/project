@@ -41,4 +41,29 @@ void main() {
     expect(assignment.status, 'submitted');
     expect(assignment.submissionCount, 1);
   });
+
+  test('parses advanced Standard Task fields', () {
+    final task = TaskItem.fromJson({
+      '_id': 'task-1',
+      'title': 'Recurring task',
+      'project': {'_id': 'project-1', 'name': 'Project'},
+      'deadline': '2026-10-20T00:00:00Z',
+      'collaborators': [
+        {' _id': 'ignored'},
+      ],
+      'watchers': [
+        {' _id': 'watcher'},
+      ],
+      'dependencies': [
+        {'_id': 'dep', 'title': 'First task', 'status': 'todo'},
+      ],
+      'tags': ['urgent', 'class'],
+      'category': 'School',
+      'recurrence': {'frequency': 'weekly', 'count': 4, 'interval': 1},
+    });
+    expect(task.category, 'School');
+    expect(task.tags, contains('class'));
+    expect(task.dependencies.single['title'], 'First task');
+    expect(task.recurrence['frequency'], 'weekly');
+  });
 }

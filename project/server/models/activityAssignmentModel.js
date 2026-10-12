@@ -18,7 +18,7 @@ const attemptSchema = new mongoose.Schema({
 const schema = new mongoose.Schema({
   activity: { type: mongoose.Schema.Types.ObjectId, ref: 'Task', required: true, index: true },
   recipient: { type: mongoose.Schema.Types.ObjectId, ref: 'Auth', required: true, index: true },
-  status: { type: String, enum: ['assigned', 'in-progress', 'submitted', 'late', 'returned', 'resubmitted', 'accepted'], default: 'assigned', index: true },
+  status: { type: String, enum: ['assigned', 'in-progress', 'submitted', 'late', 'returned', 'reopened', 'resubmitted', 'accepted', 'cancelled'], default: 'assigned', index: true },
   textResponse: { type: String, default: '' },
   attachments: [attachmentSchema],
   submissionHistory: [attemptSchema],
@@ -31,6 +31,10 @@ const schema = new mongoose.Schema({
   score: { type: Number, min: 0 },
   maximumScore: { type: Number, min: 0, default: 100 },
   isLate: { type: Boolean, default: false },
+  reopenedAt: Date,
+  reopenedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Auth' },
+  reopenReason: { type: String, default: '' },
+  removedAt: Date,
 }, { timestamps: true });
 
 schema.index({ activity: 1, recipient: 1 }, { unique: true });

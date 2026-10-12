@@ -143,3 +143,108 @@ exports.remind = async (req, res, next) => { try {
   await Promise.all(items.map((item) => notify(item.recipient, 'Activity reminder', activity.title, 'reminder', 'Task', activity._id)));
   res.json({ message: `Reminder sent to ${items.length} recipient(s).`, count: items.length });
 } catch (error) { next(error); } };
+
+exports.update = async (req, res, next) => { try {
+  const activity = await Task.findOne({ _id: req.params.id, type: 'individual-activity' });
+  if (!activity) return res.status(404).json({ message: 'Activity not found.' });
+  if (!await canReview(req.user, activity)) return res.status(403).json({ message: 'Permission denied.' });
+  const allowed = ['title', 'description', 'priority', 'startDate', 'deadline', 'activitySettings'];
+  const changes = Object.fromEntries(Object.entries(req.body).filter(([key]) => allowed.includes(key)));
+  const start = changes.startDate ?? activity.startDate, deadline = changes.deadline ?? activity.deadline;
+  if (start && deadline && new Date(deadline) < new Date(start)) return res.status(400).json({ message: 'Deadline must be after the start date.' });
+  const settings = changes.activitySettings ?? activity.activitySettings;
+  if (!settings.allowTextResponse && !settings.requireAttachment) return res.status(400).json({ message: 'Enable a text response or require an attachment.' });
+  Object.assign(activity, changes); await activity.save();
+  if (changes.activitySettings?.maximumScore != null) await Assignment.updateMany({ activity: activity._id }, { maximumScore: changes.activitySettings.maximumScore });
+  const recipients = await Assignment.find({ activity: activity._id, status: { $ne: 'cancelled' } }).distinct('recipient');
+  await Promise.all(recipients.map((recipient) => notify(recipient, 'Activity updated', activity.title, 'status', 'Task', activity._id)));
+  await logActivity(req.user._id, 'UPDATE_INDIVIDUAL_ACTIVITY', 'Task', activity._id, Object.keys(changes));
+  emitAll('task:changed', activity); res.json({ item: await activity.populate('project reporter') });
+} catch (error) { next(error); } };
+
+exports.addRecipients = async (req, res, next) => { try {
+  const activity = await Task.findOne({ _id: req.params.id, type: 'individual-activity' });
+  if (!activity) return res.status(404).json({ message: 'Activity not found.' });
+  if (!await canReview(req.user, activity)) return res.status(403).json({ message: 'Permission denied.' });
+  const requested = [...new Set((req.body.recipients || []).map(String))];
+  const project = await Project.findById(activity.project);
+  const members = new Set((project?.members || []).map(String));
+  if (requested.some((recipient) => !members.has(recipient))) return res.status(400).json({ message: 'Every recipient must be a project member.' });
+  const existingItems = await Assignment.find({ activity: activity._id, recipient: { $in: requested } });
+  const existing = new Map(existingItems.map((item) => [String(item.recipient), item]));
+  const recipients = requested.filter((recipient) => !existing.has(recipient));
+  const reactivated = existingItems.filter((item) => item.status === 'cancelled');
+  for (const item of reactivated) { item.status = item.submissionCount ? 'reopened' : 'assigned'; item.removedAt = undefined; await item.save(); }
+  if (!recipients.length && !reactivated.length) return res.status(409).json({ message: 'All selected recipients already have active assignments.' });
+  const items = recipients.length ? await Assignment.insertMany(recipients.map((recipient) => ({ activity: activity._id, recipient, maximumScore: activity.activitySettings.maximumScore || 100 }))) : [];
+  const affected = [...recipients, ...reactivated.map((item) => String(item.recipient))];
+  await Promise.all(affected.map((recipient) => notify(recipient, 'Added to individual activity', activity.title, 'assignment', 'Task', activity._id)));
+  await logActivity(req.user._id, 'ADD_ACTIVITY_RECIPIENTS', 'Task', activity._id, { count: affected.length });
+  emitAll('activity-assignment:changed', { activity: activity._id }); res.status(201).json({ items: [...items, ...reactivated], added: affected.length });
+} catch (error) { next(error); } };
+
+exports.removeRecipient = async (req, res, next) => { try {
+  const activity = await Task.findOne({ _id: req.params.id, type: 'individual-activity' });
+  if (!activity) return res.status(404).json({ message: 'Activity not found.' });
+  if (!await canReview(req.user, activity)) return res.status(403).json({ message: 'Permission denied.' });
+  const item = await Assignment.findOne({ activity: activity._id, recipient: req.params.userId });
+  if (!item) return res.status(404).json({ message: 'Recipient assignment not found.' });
+  if (item.submissionCount > 0) { item.status = 'cancelled'; item.removedAt = new Date(); await item.save(); }
+  else await item.deleteOne();
+  await notify(item.recipient, 'Removed from activity', activity.title, 'status', 'Task', activity._id);
+  await logActivity(req.user._id, 'REMOVE_ACTIVITY_RECIPIENT', 'Task', activity._id, { recipient: item.recipient, preservedHistory: item.submissionCount > 0 });
+  emitAll('activity-assignment:changed', item); res.json({ message: item.submissionCount > 0 ? 'Recipient removed; submission history was preserved.' : 'Recipient removed.' });
+} catch (error) { next(error); } };
+
+exports.archive = async (req, res, next) => { try {
+  const activity = await Task.findOne({ _id: req.params.id, type: 'individual-activity' });
+  if (!activity) return res.status(404).json({ message: 'Activity not found.' });
+  if (!await canReview(req.user, activity)) return res.status(403).json({ message: 'Permission denied.' });
+  activity.isArchived = req.body.archived !== false; await activity.save();
+  await logActivity(req.user._id, activity.isArchived ? 'ARCHIVE_ACTIVITY' : 'RESTORE_ACTIVITY', 'Task', activity._id);
+  emitAll('task:changed', activity); res.json({ item: activity });
+} catch (error) { next(error); } };
+
+exports.cancel = async (req, res, next) => { try {
+  const activity = await Task.findOne({ _id: req.params.id, type: 'individual-activity' });
+  if (!activity) return res.status(404).json({ message: 'Activity not found.' });
+  if (!await canReview(req.user, activity)) return res.status(403).json({ message: 'Permission denied.' });
+  activity.isCancelled = true; activity.isArchived = true; await activity.save();
+  const assignments = await Assignment.find({ activity: activity._id });
+  const cancellable = assignments.filter((item) => !['accepted', 'cancelled'].includes(item.status));
+  await Assignment.updateMany({ _id: { $in: cancellable.map((item) => item._id) } }, { status: 'cancelled' });
+  await Promise.all(assignments.map((item) => notify(item.recipient, 'Activity cancelled', activity.title, 'status', 'Task', activity._id)));
+  await logActivity(req.user._id, 'CANCEL_ACTIVITY', 'Task', activity._id, { reason: req.body.reason || '' });
+  emitAll('task:changed', activity); res.json({ item: activity });
+} catch (error) { next(error); } };
+
+exports.reopen = async (req, res, next) => { try {
+  const activity = await Task.findOne({ _id: req.params.id, type: 'individual-activity' });
+  if (!activity) return res.status(404).json({ message: 'Activity not found.' });
+  if (!await canReview(req.user, activity)) return res.status(403).json({ message: 'Permission denied.' });
+  if (req.body.deadline) activity.deadline = req.body.deadline;
+  activity.isCancelled = false; activity.isArchived = false; await activity.save();
+  const query = { activity: activity._id, status: { $in: ['accepted', 'cancelled'] } };
+  if (Array.isArray(req.body.assignmentIds) && req.body.assignmentIds.length) query._id = { $in: req.body.assignmentIds };
+  const items = await Assignment.find(query);
+  for (const item of items) {
+    item.status = 'reopened'; item.reopenedAt = new Date(); item.reopenedBy = req.user._id; item.reopenReason = String(req.body.reason || '');
+    if (item.submissionCount >= (activity.activitySettings.maxSubmissions || 1)) activity.activitySettings.maxSubmissions = item.submissionCount + 1;
+    await item.save();
+    await notify(item.recipient, 'Activity reopened', `${activity.title}${req.body.reason ? `: ${req.body.reason}` : ''}`, 'status', 'Task', activity._id);
+  }
+  await activity.save(); await logActivity(req.user._id, 'REOPEN_ACTIVITY', 'Task', activity._id, { assignments: items.length, reason: req.body.reason || '' });
+  emitAll('activity-assignment:changed', { activity: activity._id }); res.json({ item: activity, reopened: items.length });
+} catch (error) { next(error); } };
+
+const csv = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+exports.exportCsv = async (req, res, next) => { try {
+  const activity = await Task.findOne({ _id: req.params.id, type: 'individual-activity' });
+  if (!activity) return res.status(404).json({ message: 'Activity not found.' });
+  if (!await canReview(req.user, activity)) return res.status(403).json({ message: 'Permission denied.' });
+  const items = await Assignment.find({ activity: activity._id }).populate('recipient reviewer').sort('recipient');
+  const rows = [['Recipient', 'Email', 'Status', 'Submissions', 'First submitted', 'Latest submitted', 'Late', 'Score', 'Maximum score', 'Feedback']];
+  for (const item of items) rows.push([`${item.recipient?.firstName || ''} ${item.recipient?.lastName || ''}`.trim(), item.recipient?.email || '', item.status, item.submissionCount, item.firstSubmittedAt?.toISOString() || '', item.latestSubmittedAt?.toISOString() || '', item.isLate ? 'Yes' : 'No', item.score ?? '', item.maximumScore, item.feedback]);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8'); res.setHeader('Content-Disposition', `attachment; filename="${activity.title.replace(/[^a-z0-9]+/gi, '-')}-results.csv"`);
+  res.send(rows.map((row) => row.map(csv).join(',')).join('\n'));
+} catch (error) { next(error); } };

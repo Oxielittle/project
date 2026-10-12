@@ -80,6 +80,38 @@ class TaskService {
   );
   static Future<String> remindActivity(String id) async =>
       (await ApiClient.post('/activities/$id/remind', const {}))['message'];
+  static Future<TaskItem> updateActivity(
+    String id,
+    Map<String, dynamic> body,
+  ) async => TaskItem.fromJson(
+    Map<String, dynamic>.from(
+      (await ApiClient.patch('/activities/$id', body))['item'],
+    ),
+  );
+  static Future<void> addActivityRecipients(
+    String id,
+    List<String> recipients,
+  ) async =>
+      ApiClient.post('/activities/$id/recipients', {'recipients': recipients});
+  static Future<void> removeActivityRecipient(String id, String userId) async =>
+      ApiClient.delete('/activities/$id/recipients/$userId');
+  static Future<void> archiveActivity(String id, bool archived) async =>
+      ApiClient.patch('/activities/$id/archive', {'archived': archived});
+  static Future<void> cancelActivity(String id, String reason) async =>
+      ApiClient.patch('/activities/$id/cancel', {'reason': reason});
+  static Future<int> reopenActivity(
+    String id, {
+    List<String>? assignmentIds,
+    DateTime? deadline,
+    String reason = '',
+  }) async =>
+      ((await ApiClient.post('/activities/$id/reopen', {
+                if (assignmentIds != null) 'assignmentIds': assignmentIds,
+                if (deadline != null) 'deadline': deadline.toIso8601String(),
+                'reason': reason,
+              }))['reopened']
+              as num)
+          .toInt();
   static Future<TaskItem> update(String id, Map<String, dynamic> body) async =>
       TaskItem.fromJson(
         Map<String, dynamic>.from(

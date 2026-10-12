@@ -20,20 +20,34 @@ class TaskItem {
     this.startDate,
     this.activitySettings = const {},
     this.activityStatus,
+    this.collaborators = const [],
+    this.watchers = const [],
+    this.tags = const [],
+    this.category = '',
+    this.dependencies = const [],
+    this.recurrence = const {},
+    this.isArchived = false,
+    this.isCancelled = false,
     this.subtasks = const [],
     this.attachments = const [],
   });
-  final String id, title, description, project, assignee, projectId;
+  final String id, project, assignee, projectId;
+  String title, description;
   final String? assigneeId;
   final String? reporterId;
   final String reporter;
   final String type;
-  final DateTime? startDate;
-  final Map<String, dynamic> activitySettings;
+  DateTime? startDate;
+  Map<String, dynamic> activitySettings;
   final String? activityStatus;
+  final List<Map<String, dynamic>> collaborators, watchers, dependencies;
+  final List<String> tags;
+  final String category;
+  final Map<String, dynamic> recurrence;
+  final bool isArchived, isCancelled;
   final TaskPriority priority;
   TaskStatus status;
-  final DateTime dueDate;
+  DateTime dueDate;
   final List<Map<String, dynamic>> subtasks;
   final List<Map<String, dynamic>> attachments;
   bool get isOverdue =>
@@ -59,6 +73,31 @@ class TaskItem {
         j['activitySettings'] is Map ? j['activitySettings'] : const {},
       ),
       activityStatus: j['myAssignmentStatus']?.toString(),
+      collaborators: (j['collaborators'] as List? ?? const [])
+          .map(
+            (e) =>
+                e is Map ? Map<String, dynamic>.from(e) : {'_id': e.toString()},
+          )
+          .toList(),
+      watchers: (j['watchers'] as List? ?? const [])
+          .map(
+            (e) =>
+                e is Map ? Map<String, dynamic>.from(e) : {'_id': e.toString()},
+          )
+          .toList(),
+      dependencies: (j['dependencies'] as List? ?? const [])
+          .map(
+            (e) =>
+                e is Map ? Map<String, dynamic>.from(e) : {'_id': e.toString()},
+          )
+          .toList(),
+      tags: (j['tags'] as List? ?? const []).map((e) => e.toString()).toList(),
+      category: j['category'] ?? '',
+      recurrence: Map<String, dynamic>.from(
+        j['recurrence'] is Map ? j['recurrence'] : const {},
+      ),
+      isArchived: j['isArchived'] == true,
+      isCancelled: j['isCancelled'] == true,
       assignee: a is Map
           ? '${a['firstName'] ?? ''} ${a['lastName'] ?? ''}'.trim()
           : 'Unassigned',

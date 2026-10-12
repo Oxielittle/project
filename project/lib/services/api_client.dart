@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -58,6 +59,18 @@ class ApiClient {
     );
     final streamed = await request.send();
     return _decode(await http.Response.fromStream(streamed));
+  }
+
+  static Future<Uint8List> download(String path) async {
+    final response = await http.get(
+      Uri.parse('${ApiConfig.api}$path'),
+      headers: await _headers(),
+    );
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return response.bodyBytes;
+    }
+    _decode(response);
+    return Uint8List(0);
   }
 
   static dynamic _decode(http.Response response) {

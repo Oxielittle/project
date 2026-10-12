@@ -11,15 +11,16 @@ const { notify } = require('../services/notifications');
 const { emitAll } = require('../services/events');
 const fs = require('fs');
 const path = require('path');
+const { shiftDate, dependencyBlockMessage } = require('../services/taskRules');
 
 const visibleTaskQuery = async (user) => {
   if (user.role === 'admin') return {};
   const activityIds = await ActivityAssignment.find({ recipient: user._id }).distinct('activity');
   if (user.role === 'manager') {
     const managedProjects = await Project.find({ manager: user._id }).distinct('_id');
-    return { $or: [{ reporter: user._id }, { assignee: user._id }, { _id: { $in: activityIds } }, { project: { $in: managedProjects } }] };
+    return { $or: [{ reporter: user._id }, { assignee: user._id }, { collaborators: user._id }, { watchers: user._id }, { _id: { $in: activityIds } }, { project: { $in: managedProjects } }] };
   }
-  return { $or: [{ assignee: user._id }, { _id: { $in: activityIds } }] };
+  return { $or: [{ assignee: user._id }, { collaborators: user._id }, { watchers: user._id }, { _id: { $in: activityIds } }] };
 };
 const list = (Model, populate = '') => async (req, res, next) => { try {
   const page = Math.max(Number(req.query.page) || 1, 1); const limit = Math.min(Number(req.query.limit) || 50, 100);
@@ -58,7 +59,7 @@ exports.listTasks = async (req, res, next) => { try {
   const query = { ...await visibleTaskQuery(req.user), isArchived: req.query.archived === 'true' };
   ['status', 'priority', 'project', 'assignee', 'type'].forEach((key) => { if (req.query[key]) query[key] = req.query[key]; });
   if (req.query.search) query.title = new RegExp(req.query.search, 'i');
-  const items = await Task.find(query).populate('project assignee reporter').sort(req.query.sort || '-createdAt');
+  const items = await Task.find(query).populate('project assignee reporter collaborators watchers dependencies').sort(req.query.sort || '-createdAt');
   if (req.user.role !== 'admin') {
     const assignments = await ActivityAssignment.find({ recipient: req.user._id, activity: { $in: items.map((item) => item._id) } }).select('activity status');
     const statuses = new Map(assignments.map((item) => [String(item.activity), item.status]));
@@ -67,17 +68,70 @@ exports.listTasks = async (req, res, next) => { try {
   }
   res.json({ items, total: items.length });
 } catch (e) { next(e); } };
-exports.getTask = async (req, res, next) => { try { const item = await Task.findOne({ _id: req.params.id, ...await visibleTaskQuery(req.user) }).populate('project assignee reporter'); if (!item) return res.status(404).json({ message: 'Task not found.' }); res.json({ item }); } catch (e) { next(e); } };
-exports.createTask = async (req, res, next) => { try { const item = await Task.create({ ...req.body, reporter: req.user._id }); await logActivity(req.user._id, 'CREATE_TASK', 'Task', item._id); await notify(item.assignee, 'New task assigned', item.title, 'assignment', 'Task', item._id); emitAll('task:changed', item); res.status(201).json({ item }); } catch (e) { next(e); } };
-exports.updateTask = async (req, res, next) => { try { const before = await Task.findOne({ _id: req.params.id, ...await visibleTaskQuery(req.user) }); if (!before) return res.status(404).json({ message: 'Task not found.' }); if (before.type === 'individual-activity' && req.user.role === 'member') return res.status(403).json({ message: 'Use your individual assignment to update this activity.' }); let changes = req.body; if (req.user.role === 'member') { const allowed = ['status', 'subtasks', 'progress']; changes = Object.fromEntries(Object.entries(req.body).filter(([key]) => allowed.includes(key))); } const item = await Task.findByIdAndUpdate(req.params.id, changes, { new: true, runValidators: true }); await logActivity(req.user._id, 'UPDATE_TASK', 'Task', item._id, { status: item.status }); if (before.status !== item.status) await notify(item.assignee, 'Task status updated', `${item.title}: ${item.status}`, 'status', 'Task', item._id); emitAll('task:changed', item); res.json({ item }); } catch (e) { next(e); } };
+exports.getTask = async (req, res, next) => { try { const item = await Task.findOne({ _id: req.params.id, ...await visibleTaskQuery(req.user) }).populate('project assignee reporter collaborators watchers dependencies'); if (!item) return res.status(404).json({ message: 'Task not found.' }); res.json({ item }); } catch (e) { next(e); } };
+
+const validateDependencies = async (taskId, projectId, dependencies = []) => {
+  const ids = [...new Set(dependencies.map(String))];
+  if (taskId && ids.includes(String(taskId))) return 'A task cannot depend on itself.';
+  const valid = await Task.countDocuments({ _id: { $in: ids }, project: projectId, type: 'standard' });
+  if (valid !== ids.length) return 'Dependencies must be Standard Tasks in the same project.';
+  if (taskId) {
+    const visit = async (idsToVisit, seen = new Set()) => { for (const current of idsToVisit) { if (String(current) === String(taskId)) return true; if (seen.has(String(current))) continue; seen.add(String(current)); const task = await Task.findById(current).select('dependencies'); if (task && await visit(task.dependencies, seen)) return true; } return false; };
+    if (await visit(ids)) return 'This dependency would create a cycle.';
+  }
+  return null;
+};
+
+exports.createTask = async (req, res, next) => { try {
+  const project = await Project.findById(req.body.project);
+  if (!project) return res.status(404).json({ message: 'Project not found.' });
+  const allowedMembers = new Set([String(project.manager), ...(project.members || []).map(String)]);
+  const participants = [req.body.assignee, ...(req.body.collaborators || []), ...(req.body.watchers || [])].filter(Boolean).map(String);
+  if (participants.some((userId) => !allowedMembers.has(userId))) return res.status(400).json({ message: 'Assignee, collaborators, and watchers must belong to the project.' });
+  const dependencyError = await validateDependencies(null, req.body.project, req.body.dependencies || []);
+  if (dependencyError) return res.status(400).json({ message: dependencyError });
+  if (req.body.status && (req.body.dependencies || []).length) { const incomplete = await Task.countDocuments({ _id: { $in: req.body.dependencies }, status: { $ne: 'completed' } }); const message = dependencyBlockMessage(req.body.status, incomplete); if (message) return res.status(409).json({ message }); }
+  const recurrence = req.body.recurrence || { frequency: 'none', count: 1, interval: 1 };
+  const item = await Task.create({ ...req.body, type: 'standard', reporter: req.user._id });
+  const occurrences = [item];
+  if (recurrence.frequency && recurrence.frequency !== 'none' && recurrence.count > 1) {
+    const copies = [];
+    for (let index = 1; index < Math.min(Number(recurrence.count), 50); index++) {
+      const deadline = req.body.deadline ? shiftDate(req.body.deadline, recurrence.frequency, Number(recurrence.interval || 1), index) : undefined;
+      if (recurrence.endDate && deadline && deadline > new Date(recurrence.endDate)) break;
+      copies.push({ ...req.body, type: 'standard', reporter: req.user._id, recurrenceParent: item._id, occurrenceDate: deadline, deadline, startDate: req.body.startDate ? shiftDate(req.body.startDate, recurrence.frequency, Number(recurrence.interval || 1), index) : undefined, recurrence });
+    }
+    if (copies.length) occurrences.push(...await Task.insertMany(copies));
+  }
+  const recipients = [...new Set([item.assignee, ...(item.collaborators || []), ...(item.watchers || [])].filter(Boolean).map(String))];
+  await Promise.all(recipients.map((recipient) => notify(recipient, 'New task assigned', item.title, 'assignment', 'Task', item._id)));
+  await logActivity(req.user._id, 'CREATE_TASK', 'Task', item._id, { occurrences: occurrences.length }); emitAll('task:changed', item);
+  res.status(201).json({ item: await item.populate('project assignee reporter collaborators watchers dependencies'), occurrences: occurrences.length });
+} catch (e) { next(e); } };
+
+exports.updateTask = async (req, res, next) => { try {
+  const before = await Task.findOne({ _id: req.params.id, ...await visibleTaskQuery(req.user) }); if (!before) return res.status(404).json({ message: 'Task not found.' });
+  if (before.type === 'individual-activity' && req.user.role === 'member') return res.status(403).json({ message: 'Use your individual assignment to update this activity.' });
+  let changes = req.body;
+  if (req.user.role === 'member') { if (String(before.assignee) !== String(req.user._id) && !(before.collaborators || []).map(String).includes(String(req.user._id))) return res.status(403).json({ message: 'Watchers cannot modify this task.' }); const allowed = ['status', 'subtasks', 'progress']; changes = Object.fromEntries(Object.entries(req.body).filter(([key]) => allowed.includes(key))); }
+  if (changes.dependencies) { const error = await validateDependencies(before._id, before.project, changes.dependencies); if (error) return res.status(400).json({ message: error }); }
+  const effectiveDependencies = changes.dependencies || before.dependencies;
+  if (changes.status && effectiveDependencies.length) { const incomplete = await Task.countDocuments({ _id: { $in: effectiveDependencies }, status: { $ne: 'completed' } }); const message = dependencyBlockMessage(changes.status, incomplete); if (message) return res.status(409).json({ message }); }
+  const item = await Task.findByIdAndUpdate(req.params.id, changes, { new: true, runValidators: true }).populate('project assignee reporter collaborators watchers dependencies');
+  await logActivity(req.user._id, 'UPDATE_TASK', 'Task', item._id, { status: item.status });
+  if (before.status !== item.status) { const recipients = [...new Set([item.assignee, ...(item.collaborators || []), ...(item.watchers || [])].filter(Boolean).map((value) => String(value._id || value)))]; await Promise.all(recipients.map((recipient) => notify(recipient, 'Task status updated', `${item.title}: ${item.status}`, 'status', 'Task', item._id))); }
+  emitAll('task:changed', item); res.json({ item });
+} catch (e) { next(e); } };
 exports.deleteTask = async (req, res, next) => { try { const query = req.user.role === 'admin' ? { _id: req.params.id } : { _id: req.params.id, reporter: req.user._id }; const item = await Task.findOneAndDelete(query); if (!item) return res.status(403).json({ message: 'Only the creator or an administrator can delete this task.' }); if (item.type === 'individual-activity') await ActivityAssignment.deleteMany({ activity: item._id }); await logActivity(req.user._id, 'DELETE_TASK', 'Task', req.params.id); emitAll('task:deleted', { id: req.params.id }); res.json({ message: 'Task deleted.', item }); } catch (e) { next(e); } };
 exports.addAttachment = async (req, res, next) => { try {
   if (!req.file) return res.status(400).json({ message: 'Choose a file to upload.' });
   const task = await Task.findOne({ _id: req.params.id, ...await visibleTaskQuery(req.user) });
   if (!task) return res.status(404).json({ message: 'Task not found.' });
   if (task.type === 'individual-activity' && req.user.role === 'member') { fs.unlink(req.file.path, () => {}); return res.status(403).json({ message: 'Upload files to your private activity assignment.' }); }
+  if (task.type === 'standard' && req.user.role === 'member' && String(task.assignee) !== String(req.user._id) && !(task.collaborators || []).map(String).includes(String(req.user._id))) { fs.unlink(req.file.path, () => {}); return res.status(403).json({ message: 'Watchers cannot upload task files.' }); }
   const attachment = { name: req.file.originalname, url: `/uploads/${req.file.filename}`, mimeType: req.file.mimetype, size: req.file.size };
   task.attachments.push(attachment); await task.save();
+  if (task.recurrence?.frequency && task.recurrence.frequency !== 'none' && !task.recurrenceParent) await Task.updateMany({ recurrenceParent: task._id }, { $push: { attachments: attachment } });
   await logActivity(req.user._id, 'ADD_ATTACHMENT', 'Task', task._id, { name: attachment.name });
   emitAll('task:changed', task); res.status(201).json({ item: attachment, task });
 } catch (e) { next(e); } };
@@ -85,9 +139,11 @@ exports.deleteAttachment = async (req, res, next) => { try {
   const task = await Task.findOne({ _id: req.params.id, ...await visibleTaskQuery(req.user) });
   if (!task) return res.status(404).json({ message: 'Task not found.' });
   if (task.type === 'individual-activity' && req.user.role === 'member') return res.status(403).json({ message: 'Only an activity creator or reviewer can delete reference files.' });
+  if (task.type === 'standard' && req.user.role === 'member' && String(task.assignee) !== String(req.user._id) && !(task.collaborators || []).map(String).includes(String(req.user._id))) return res.status(403).json({ message: 'Watchers cannot delete task files.' });
   const attachment = task.attachments.id(req.params.attachmentId);
   if (!attachment) return res.status(404).json({ message: 'Attachment not found.' });
-  const filename = path.basename(attachment.url); attachment.deleteOne(); await task.save();
+  const attachmentUrl = attachment.url, filename = path.basename(attachmentUrl); attachment.deleteOne(); await task.save();
+  if (task.recurrence?.frequency && task.recurrence.frequency !== 'none' && !task.recurrenceParent) await Task.updateMany({ recurrenceParent: task._id }, { $pull: { attachments: { url: attachmentUrl } } });
   fs.unlink(path.join(__dirname, '..', 'uploads', filename), () => {});
   emitAll('task:changed', task); res.json({ message: 'Attachment deleted.' });
 } catch (e) { next(e); } };
