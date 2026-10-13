@@ -47,7 +47,11 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
   }
 
   Future<void> _archive() async {
-    await TaskService.archive(widget.task.id, true);
+    if (widget.task.isPersonal) {
+      await TaskService.archivePersonal(widget.task.id, true);
+    } else {
+      await TaskService.archive(widget.task.id, true);
+    }
     if (mounted) Navigator.pop(context);
   }
 
@@ -90,9 +94,15 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
   }
 
   Future<void> _saveSubtasks() async {
-    await TaskService.update(widget.task.id, {
-      'subtasks': widget.task.subtasks,
-    });
+    if (widget.task.isPersonal) {
+      await TaskService.updatePersonal(widget.task.id, {
+        'subtasks': widget.task.subtasks,
+      });
+    } else {
+      await TaskService.update(widget.task.id, {
+        'subtasks': widget.task.subtasks,
+      });
+    }
     if (mounted) setState(() {});
   }
 
@@ -133,49 +143,184 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
 
   Future<void> _edit() async {
     final title = TextEditingController(text: widget.task.title),
-        description = TextEditingController(text: widget.task.description);
+        description = TextEditingController(text: widget.task.description),
+        category = TextEditingController(text: widget.task.category),
+        tags = TextEditingController(text: widget.task.tags.join(', '));
+    var priority = widget.task.priority;
+    var startDate = widget.task.startDate ?? DateTime.now();
+    var deadline = widget.task.dueDate;
+    var reminder = widget.task.reminderAt;
     final save =
         await showDialog<bool>(
           context: context,
-          builder: (c) => AlertDialog(
-            title: const Text('Edit task'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: title,
-                  decoration: const InputDecoration(labelText: 'Title'),
+          builder: (c) => StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              title: const Text('Edit task'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: title,
+                      decoration: const InputDecoration(labelText: 'Title'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: description,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                        labelText: 'Description',
+                      ),
+                    ),
+                    if (widget.task.isPersonal) ...[
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<TaskPriority>(
+                        initialValue: priority,
+                        decoration: const InputDecoration(
+                          labelText: 'Priority',
+                        ),
+                        items: TaskPriority.values
+                            .map(
+                              (value) => DropdownMenuItem(
+                                value: value,
+                                child: Text(value.label),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) {
+                          if (value != null)
+                            setDialogState(() => priority = value);
+                        },
+                      ),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Start date'),
+                        subtitle: Text(
+                          '${startDate.month}/${startDate.day}/${startDate.year}',
+                        ),
+                        onTap: () async {
+                          final value = await showDatePicker(
+                            context: context,
+                            initialDate: startDate,
+                            firstDate: DateTime.now().subtract(
+                              const Duration(days: 365),
+                            ),
+                            lastDate: DateTime.now().add(
+                              const Duration(days: 730),
+                            ),
+                          );
+                          if (value != null)
+                            setDialogState(() => startDate = value);
+                        },
+                      ),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Deadline'),
+                        subtitle: Text(
+                          '${deadline.month}/${deadline.day}/${deadline.year}',
+                        ),
+                        onTap: () async {
+                          final value = await showDatePicker(
+                            context: context,
+                            initialDate: deadline,
+                            firstDate: DateTime.now().subtract(
+                              const Duration(days: 365),
+                            ),
+                            lastDate: DateTime.now().add(
+                              const Duration(days: 730),
+                            ),
+                          );
+                          if (value != null)
+                            setDialogState(() => deadline = value);
+                        },
+                      ),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Reminder'),
+                        subtitle: Text(
+                          reminder == null
+                              ? 'None'
+                              : '${reminder!.month}/${reminder!.day}/${reminder!.year}',
+                        ),
+                        trailing: reminder == null
+                            ? null
+                            : IconButton(
+                                onPressed: () =>
+                                    setDialogState(() => reminder = null),
+                                icon: const Icon(Icons.close),
+                              ),
+                        onTap: () async {
+                          final value = await showDatePicker(
+                            context: context,
+                            initialDate: reminder ?? deadline,
+                            firstDate: DateTime.now().subtract(
+                              const Duration(days: 1),
+                            ),
+                            lastDate: deadline,
+                          );
+                          if (value != null)
+                            setDialogState(() => reminder = value);
+                        },
+                      ),
+                      TextField(
+                        controller: category,
+                        decoration: const InputDecoration(
+                          labelText: 'Category',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: tags,
+                        decoration: const InputDecoration(
+                          labelText: 'Tags',
+                          helperText: 'Comma-separated',
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: description,
-                  maxLines: 3,
-                  decoration: const InputDecoration(labelText: 'Description'),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(c, false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(c, true),
+                  child: const Text('Save'),
                 ),
               ],
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(c, false),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.pop(c, true),
-                child: const Text('Save'),
-              ),
-            ],
           ),
         ) ??
         false;
     if (save) {
-      await TaskService.update(widget.task.id, {
+      final body = <String, dynamic>{
         'title': title.text.trim(),
         'description': description.text.trim(),
-      });
+        if (widget.task.isPersonal) 'priority': priority.name,
+        if (widget.task.isPersonal) 'startDate': startDate.toIso8601String(),
+        if (widget.task.isPersonal) 'deadline': deadline.toIso8601String(),
+        if (widget.task.isPersonal) 'reminderAt': reminder?.toIso8601String(),
+        if (widget.task.isPersonal) 'category': category.text.trim(),
+        if (widget.task.isPersonal)
+          'tags': tags.text
+              .split(',')
+              .map((value) => value.trim())
+              .where((value) => value.isNotEmpty)
+              .toList(),
+      };
+      if (widget.task.isPersonal) {
+        await TaskService.updatePersonal(widget.task.id, body);
+      } else {
+        await TaskService.update(widget.task.id, body);
+      }
       if (mounted) Navigator.pop(context);
     }
     title.dispose();
     description.dispose();
+    category.dispose();
+    tags.dispose();
   }
 
   Future<void> _delete() async {
@@ -199,7 +344,11 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
         ) ??
         false;
     if (!ok) return;
-    await TaskService.delete(widget.task.id);
+    if (widget.task.isPersonal) {
+      await TaskService.deletePersonal(widget.task.id);
+    } else {
+      await TaskService.delete(widget.task.id);
+    }
     if (mounted) Navigator.pop(context);
   }
 
@@ -230,6 +379,16 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
             style: Theme.of(context).textTheme.headlineSmall
                 ?.copyWith(fontWeight: FontWeight.bold),
           ),
+          if (task.isPersonal) ...[
+            const SizedBox(height: 8),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Chip(
+                avatar: Icon(Icons.lock_person_outlined, size: 16),
+                label: Text('Private personal task'),
+              ),
+            ),
+          ],
           const SizedBox(height: 8),
           Text(
             task.project,
@@ -282,6 +441,13 @@ class _TaskDetailsPageState extends State<TaskDetailsPage> {
               label: 'Start date',
               value:
                   '${task.startDate!.month}/${task.startDate!.day}/${task.startDate!.year}',
+            ),
+          if (task.reminderAt != null)
+            _InfoTile(
+              icon: Icons.notifications_active_outlined,
+              label: 'Reminder',
+              value:
+                  '${task.reminderAt!.month}/${task.reminderAt!.day}/${task.reminderAt!.year} ${task.reminderAt!.hour.toString().padLeft(2, '0')}:${task.reminderAt!.minute.toString().padLeft(2, '0')}',
             ),
           if (task.category.isNotEmpty)
             _InfoTile(

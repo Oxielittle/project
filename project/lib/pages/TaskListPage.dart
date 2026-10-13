@@ -25,6 +25,7 @@ class _TaskListPageState extends State<TaskListPage> {
   TaskStatus? _status;
   TaskPriority? _priority;
   String _sort = 'deadline';
+  String _scope = 'all';
 
   @override
   Widget build(BuildContext context) {
@@ -36,6 +37,12 @@ class _TaskListPageState extends State<TaskListPage> {
               task.project.toLowerCase().contains(query) ||
               task.assignee.toLowerCase().contains(query);
           return matchesQuery &&
+              (_scope == 'all' ||
+                  (_scope == 'personal' && task.isPersonal) ||
+                  (_scope == 'project' &&
+                      !task.isPersonal &&
+                      !task.isIndividualActivity) ||
+                  (_scope == 'activity' && task.isIndividualActivity)) &&
               (_status == null || task.status == _status) &&
               (_priority == null || task.priority == _priority);
         }).toList()..sort(
@@ -77,6 +84,30 @@ class _TaskListPageState extends State<TaskListPage> {
                   borderSide: BorderSide.none,
                 ),
               ),
+            ),
+          ),
+          SizedBox(
+            height: 48,
+            child: ListView(
+              key: const Key('task-scope-filter'),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              scrollDirection: Axis.horizontal,
+              children: [
+                for (final option in const {
+                  'all': 'All My Tasks',
+                  'personal': 'Personal',
+                  'project': 'Project Tasks',
+                  'activity': 'Activities',
+                }.entries)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: FilterChip(
+                      label: Text(option.value),
+                      selected: _scope == option.key,
+                      onSelected: (_) => setState(() => _scope = option.key),
+                    ),
+                  ),
+              ],
             ),
           ),
           SizedBox(
@@ -159,8 +190,13 @@ class _TaskListPageState extends State<TaskListPage> {
           const SizedBox(height: 10),
           Expanded(
             child: filtered.isEmpty
-                ? const Center(
-                    child: Text('No tasks match the selected filters.'),
+                ? Center(
+                    child: Text(
+                      _scope == 'personal'
+                          ? 'No personal tasks yet. Create one to keep track of your own work.'
+                          : 'No tasks match the selected filters.',
+                      textAlign: TextAlign.center,
+                    ),
                   )
                 : ListView.separated(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
@@ -243,6 +279,12 @@ class _TaskCard extends StatelessWidget {
                       label: Text('Individual activity'),
                       visualDensity: VisualDensity.compact,
                     ),
+                  if (task.isPersonal)
+                    const Chip(
+                      avatar: Icon(Icons.lock_person_outlined, size: 16),
+                      label: Text('Personal'),
+                      visualDensity: VisualDensity.compact,
+                    ),
                   Chip(
                     label: Text(
                       task.isIndividualActivity && task.activityStatus != null
@@ -259,6 +301,23 @@ class _TaskCard extends StatelessWidget {
                     ),
                     visualDensity: VisualDensity.compact,
                   ),
+                  if (task.reminderAt != null)
+                    Chip(
+                      avatar: const Icon(
+                        Icons.notifications_active_outlined,
+                        size: 16,
+                      ),
+                      label: Text(
+                        '${task.reminderAt!.month}/${task.reminderAt!.day}',
+                      ),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  if ((task.recurrence['frequency'] ?? 'none') != 'none')
+                    Chip(
+                      avatar: const Icon(Icons.repeat, size: 16),
+                      label: Text(task.recurrence['frequency'].toString()),
+                      visualDensity: VisualDensity.compact,
+                    ),
                   Chip(
                     avatar: Icon(Icons.flag, size: 16, color: priorityColor),
                     label: Text(task.priority.label),
@@ -293,6 +352,16 @@ class _TaskCard extends StatelessWidget {
                   ),
                 ],
               ),
+              if (task.subtasks.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                LinearProgressIndicator(
+                  value:
+                      task.subtasks
+                          .where((item) => item['completed'] == true)
+                          .length /
+                      task.subtasks.length,
+                ),
+              ],
             ],
           ),
         ),

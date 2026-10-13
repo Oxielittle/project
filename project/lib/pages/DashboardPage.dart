@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/task_item.dart';
 
-class DashboardPage extends StatelessWidget {
+class DashboardPage extends StatefulWidget {
   const DashboardPage({
     super.key,
     required this.tasks,
@@ -12,14 +12,34 @@ class DashboardPage extends StatelessWidget {
   final List<TaskItem> tasks;
   final VoidCallback onViewTasks;
 
+  @override
+  State<DashboardPage> createState() => _DashboardPageState();
+}
+
+class _DashboardPageState extends State<DashboardPage> {
+  String _filter = 'all';
+
+  List<TaskItem> get tasks => widget.tasks.where((task) {
+    if (task.isArchived ||
+        task.isCancelled ||
+        task.recurrence['template'] == true)
+      return false;
+    return switch (_filter) {
+      'personal' => task.isPersonal,
+      'project' => !task.isPersonal && !task.isIndividualActivity,
+      'activity' => task.isIndividualActivity,
+      _ => true,
+    };
+  }).toList();
+
   int _count(TaskStatus status) =>
-      tasks.where((task) => task.status == status).length;
+      tasks.where((task) => task.effectiveStatus == status).length;
 
   @override
   Widget build(BuildContext context) {
     final overdue = tasks.where((task) => task.isOverdue).length;
     final upcoming = [
-      ...tasks.where((task) => task.status != TaskStatus.completed),
+      ...tasks.where((task) => task.effectiveStatus != TaskStatus.completed),
     ]..sort((a, b) => a.dueDate.compareTo(b.dueDate));
 
     return CustomScrollView(
@@ -83,13 +103,29 @@ class DashboardPage extends StatelessWidget {
                     ),
                     const SizedBox(height: 16),
                     FilledButton.tonal(
-                      onPressed: onViewTasks,
+                      onPressed: widget.onViewTasks,
                       child: const Text('View my tasks'),
                     ),
                   ],
                 ),
               ),
               const SizedBox(height: 20),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: SegmentedButton<String>(
+                  key: const Key('dashboard-work-filter'),
+                  segments: const [
+                    ButtonSegment(value: 'all', label: Text('All My Work')),
+                    ButtonSegment(value: 'personal', label: Text('Personal')),
+                    ButtonSegment(value: 'project', label: Text('Projects')),
+                    ButtonSegment(value: 'activity', label: Text('Activities')),
+                  ],
+                  selected: {_filter},
+                  onSelectionChanged: (value) =>
+                      setState(() => _filter = value.first),
+                ),
+              ),
+              const SizedBox(height: 12),
               _InteractiveDonut(
                 values: [
                   _count(TaskStatus.todo),
@@ -112,7 +148,7 @@ class DashboardPage extends StatelessWidget {
                       'Review these tasks and update their deadlines.',
                     ),
                     trailing: const Icon(Icons.chevron_right),
-                    onTap: onViewTasks,
+                    onTap: widget.onViewTasks,
                   ),
                 ),
               ],
@@ -125,7 +161,7 @@ class DashboardPage extends StatelessWidget {
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   TextButton(
-                    onPressed: onViewTasks,
+                    onPressed: widget.onViewTasks,
                     child: const Text('See all'),
                   ),
                 ],

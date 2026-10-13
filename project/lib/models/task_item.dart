@@ -17,7 +17,11 @@ class TaskItem {
     this.reporterId,
     this.reporter = '',
     this.type = 'standard',
+    this.scope = 'project',
+    this.ownerId,
     this.startDate,
+    this.reminderAt,
+    this.completedAt,
     this.activitySettings = const {},
     this.activityStatus,
     this.collaborators = const [],
@@ -37,7 +41,10 @@ class TaskItem {
   final String? reporterId;
   final String reporter;
   final String type;
+  final String scope;
+  final String? ownerId;
   DateTime? startDate;
+  DateTime? reminderAt, completedAt;
   Map<String, dynamic> activitySettings;
   final String? activityStatus;
   final List<Map<String, dynamic>> collaborators, watchers, dependencies;
@@ -51,24 +58,41 @@ class TaskItem {
   final List<Map<String, dynamic>> subtasks;
   final List<Map<String, dynamic>> attachments;
   bool get isOverdue =>
-      status != TaskStatus.completed && dueDate.isBefore(DateTime.now());
+      effectiveStatus != TaskStatus.completed &&
+      dueDate.isBefore(DateTime.now());
   bool get isIndividualActivity => type == 'individual-activity';
+  bool get isPersonal => scope == 'personal';
+  TaskStatus get effectiveStatus =>
+      isIndividualActivity && activityStatus != null
+      ? statusFromApi(activityStatus)
+      : status;
 
   factory TaskItem.fromJson(Map<String, dynamic> j) {
-    final p = j['project'], a = j['assignee'], r = j['reporter'];
+    final p = j['project'],
+        a = j['assignee'],
+        r = j['reporter'],
+        o = j['owner'];
     return TaskItem(
       id: j['_id'] ?? '',
       title: j['title'] ?? '',
       description: j['description'] ?? '',
       projectId: p is Map ? p['_id'] ?? '' : p ?? '',
-      project: p is Map ? p['name'] ?? 'Project' : 'Project',
+      project: j['scope'] == 'personal'
+          ? 'Personal'
+          : p is Map
+          ? p['name'] ?? 'Project'
+          : 'Project',
       assigneeId: a is Map ? a['_id'] : a,
       reporterId: r is Map ? r['_id']?.toString() : r?.toString(),
       reporter: r is Map
           ? '${r['firstName'] ?? ''} ${r['lastName'] ?? ''}'.trim()
           : '',
       type: j['type'] ?? 'standard',
+      scope: j['scope'] ?? 'project',
+      ownerId: o is Map ? o['_id']?.toString() : o?.toString(),
       startDate: DateTime.tryParse(j['startDate'] ?? ''),
+      reminderAt: DateTime.tryParse(j['reminderAt'] ?? ''),
+      completedAt: DateTime.tryParse(j['completedAt'] ?? ''),
       activitySettings: Map<String, dynamic>.from(
         j['activitySettings'] is Map ? j['activitySettings'] : const {},
       ),

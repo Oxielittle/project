@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import '../models/task_item.dart';
 import '../services/task_service.dart';
 import '../services/api_client.dart';
+import '../services/session_service.dart';
 
 class CreateTaskPage extends StatefulWidget {
   const CreateTaskPage({
@@ -38,39 +39,52 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
   final List<PlatformFile> _referenceFiles = [];
   String? _projectId, _assigneeId;
   bool _loading = true, _saving = false, _isActivity = false;
+  bool _isPersonal = true;
+  String _role = 'admin';
   bool _allowText = true, _requireAttachment = false, _allowResubmission = true;
   int _maxSubmissions = 3, _maxFileSize = 10, _maximumScore = 100;
   TaskPriority _priority = TaskPriority.medium;
   TaskStatus _status = TaskStatus.todo;
   DateTime _dueDate = DateTime.now().add(const Duration(days: 7));
   DateTime _startDate = DateTime.now();
+  DateTime? _reminderAt;
   String _recurrence = 'none';
   int _recurrenceInterval = 1, _recurrenceCount = 2;
 
   @override
   void initState() {
     super.initState();
-    if (widget.initialProjects != null && widget.initialUsers != null) {
-      _projects = widget.initialProjects!;
-      _users = widget.initialUsers!;
-      _loading = false;
-    } else {
-      _loadOptions();
-    }
+    _loadOptions();
   }
 
   Future<void> _loadOptions() async {
     try {
-      final results = await Future.wait([
-        TaskService.projects(),
-        TaskService.users(),
-        TaskService.list(),
-      ]);
+      final role = await SessionService.role();
+      if (widget.initialProjects != null && widget.initialUsers != null) {
+        if (mounted)
+          setState(() {
+            _role = role;
+            _isPersonal = _role == 'member';
+            _projects = widget.initialProjects!;
+            _users = widget.initialUsers!;
+            _loading = false;
+          });
+        return;
+      }
+      final tasks = await TaskService.list();
+      final projects = role == 'member'
+          ? <Map<String, dynamic>>[]
+          : await TaskService.projects();
+      final users = role == 'member'
+          ? <Map<String, dynamic>>[]
+          : await TaskService.users();
       if (mounted)
         setState(() {
-          _projects = results[0] as List<Map<String, dynamic>>;
-          _users = results[1] as List<Map<String, dynamic>>;
-          _tasks = results[2] as List<TaskItem>;
+          _role = role;
+          _isPersonal = _role == 'member';
+          _projects = projects;
+          _users = users;
+          _tasks = tasks;
           _loading = false;
         });
     } catch (_) {
@@ -138,9 +152,36 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
       });
   }
 
+  Future<void> _pickReminder() async {
+    final initial = _reminderAt ?? _dueDate.subtract(const Duration(hours: 1));
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime.now().subtract(const Duration(days: 1)),
+      lastDate: _dueDate,
+    );
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (time == null) return;
+    final value = DateTime(
+      date.year,
+      date.month,
+      date.day,
+      time.hour,
+      time.minute,
+    );
+    if (value.isAfter(_dueDate))
+      return _message('Reminder cannot be after the deadline.');
+    setState(() => _reminderAt = value);
+  }
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_projectId == null) return _message('Select a project.');
+    if (!_isPersonal && _projectId == null)
+      return _message('Select a project.');
     if (_isActivity && _recipients.isEmpty)
       return _message('Select at least one recipient.');
     if (_isActivity && !_allowText && !_requireAttachment)
@@ -152,12 +193,32 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
       final common = <String, dynamic>{
         'title': _title.text.trim(),
         'description': _description.text.trim(),
-        'project': _projectId,
+        if (!_isPersonal) 'project': _projectId,
         'priority': _priority.name,
         'startDate': _startDate.toIso8601String(),
         'deadline': _dueDate.toIso8601String(),
       };
-      final task = _isActivity
+      final task = _isPersonal
+          ? await TaskService.createPersonal({
+              ...common,
+              'reminderAt': _reminderAt?.toIso8601String(),
+              'subtasks': _subtasks
+                  .map((title) => {'title': title, 'completed': false})
+                  .toList(),
+              'tags': _tags.text
+                  .split(',')
+                  .map((value) => value.trim())
+                  .where((value) => value.isNotEmpty)
+                  .toList(),
+              'category': _category.text.trim(),
+              'recurrence': {
+                'frequency': _recurrence,
+                'interval': _recurrenceInterval,
+                'count': _recurrenceCount,
+              },
+              'status': _status.api,
+            })
+          : _isActivity
           ? await TaskService.createActivity({
               ...common,
               'recipients': _recipients.toList(),
@@ -238,36 +299,64 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
-      title: Text(_isActivity ? 'Create individual activity' : 'Create task'),
+      title: Text(
+        _isPersonal
+            ? 'Create personal task'
+            : _isActivity
+            ? 'Create individual activity'
+            : 'Create project task',
+      ),
     ),
     body: Form(
       key: _formKey,
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          SegmentedButton<bool>(
-            key: const Key('task-type-selector'),
-            segments: const [
-              ButtonSegment(
-                value: false,
-                icon: Icon(Icons.task_alt),
-                label: Text('Standard task'),
-              ),
-              ButtonSegment(
-                value: true,
-                icon: Icon(Icons.assignment_ind_outlined),
-                label: Text('Individual activity'),
-              ),
-            ],
-            selected: {_isActivity},
-            onSelectionChanged: (value) =>
-                setState(() => _isActivity = value.first),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SegmentedButton<String>(
+              key: const Key('task-type-selector'),
+              segments: [
+                const ButtonSegment(
+                  value: 'personal',
+                  icon: Icon(Icons.person_pin_circle_outlined),
+                  label: Text('Personal task'),
+                ),
+                if (_role != 'member')
+                  const ButtonSegment(
+                    value: 'project',
+                    icon: Icon(Icons.task_alt),
+                    label: Text('Project task'),
+                  ),
+                if (_role != 'member')
+                  const ButtonSegment(
+                    value: 'activity',
+                    icon: Icon(Icons.assignment_ind_outlined),
+                    label: Text('Individual activity'),
+                  ),
+              ],
+              selected: {
+                _isPersonal
+                    ? 'personal'
+                    : _isActivity
+                    ? 'activity'
+                    : 'project',
+              },
+              onSelectionChanged: (value) => setState(() {
+                _isPersonal = value.first == 'personal';
+                _isActivity = value.first == 'activity';
+              }),
+            ),
           ),
           const SizedBox(height: 20),
           TextFormField(
             controller: _title,
             decoration: InputDecoration(
-              labelText: _isActivity ? 'Activity title *' : 'Task title *',
+              labelText: _isActivity
+                  ? 'Activity title *'
+                  : _isPersonal
+                  ? 'Personal task title *'
+                  : 'Task title *',
               prefixIcon: const Icon(Icons.title),
             ),
             validator: _required,
@@ -285,9 +374,9 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
             validator: _required,
           ),
           const SizedBox(height: 16),
-          if (_loading)
+          if (!_isPersonal && _loading)
             const LinearProgressIndicator()
-          else
+          else if (!_isPersonal)
             DropdownButtonFormField<String>(
               initialValue: _projectId,
               decoration: const InputDecoration(
@@ -310,7 +399,14 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
               }),
             ),
           const SizedBox(height: 16),
-          if (_isActivity)
+          if (_isPersonal)
+            const ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.lock_outline),
+              title: Text('Private personal task'),
+              subtitle: Text('Only you can view and manage this task.'),
+            )
+          else if (_isActivity)
             _recipientPicker()
           else
             DropdownButtonFormField<String>(
@@ -359,12 +455,38 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
           _dateTile('Start date', _startDate, () => _pickDate(true)),
           const SizedBox(height: 12),
           _dateTile('Deadline', _dueDate, () => _pickDate(false)),
+          if (_isPersonal) ...[
+            const SizedBox(height: 12),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.notifications_active_outlined),
+              title: const Text('Reminder'),
+              subtitle: Text(
+                _reminderAt == null
+                    ? 'No reminder'
+                    : '${_reminderAt!.month}/${_reminderAt!.day}/${_reminderAt!.year}',
+              ),
+              trailing: Wrap(
+                children: [
+                  if (_reminderAt != null)
+                    IconButton(
+                      onPressed: () => setState(() => _reminderAt = null),
+                      icon: const Icon(Icons.close),
+                    ),
+                  IconButton(
+                    onPressed: _pickReminder,
+                    icon: const Icon(Icons.edit_calendar),
+                  ),
+                ],
+              ),
+            ),
+          ],
           if (_isActivity) ...[
             const SizedBox(height: 20),
             _settings(),
           ] else ...[
             const SizedBox(height: 20),
-            _standardSettings(),
+            _standardSettings(personal: _isPersonal),
           ],
           const SizedBox(height: 16),
           _referencePicker(),
@@ -380,7 +502,9 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
             label: Text(
               _isActivity
                   ? 'Create for ${_recipients.length} recipient(s)'
-                  : 'Create task',
+                  : _isPersonal
+                  ? 'Create personal task'
+                  : 'Create project task',
             ),
           ),
         ],
@@ -532,7 +656,7 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
     ),
   );
 
-  Widget _standardSettings() => Card(
+  Widget _standardSettings({bool personal = false}) => Card(
     margin: EdgeInsets.zero,
     child: Padding(
       padding: const EdgeInsets.all(12),
@@ -561,8 +685,10 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
             ),
           ),
           const SizedBox(height: 12),
-          _multiSelectTile('Collaborators', _collaborators, _eligibleUsers),
-          _multiSelectTile('Watchers', _watchers, _eligibleUsers),
+          if (!personal) ...[
+            _multiSelectTile('Collaborators', _collaborators, _eligibleUsers),
+            _multiSelectTile('Watchers', _watchers, _eligibleUsers),
+          ],
           const Divider(height: 28),
           const Text('Subtasks', style: TextStyle(fontWeight: FontWeight.bold)),
           ..._subtasks.map(
@@ -597,38 +723,42 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
               ),
             ],
           ),
-          const Divider(height: 28),
-          const Text(
-            'Dependencies',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          if (_tasks
-              .where(
-                (task) =>
-                    task.projectId == _projectId && !task.isIndividualActivity,
-              )
-              .isEmpty)
-            const Text('No existing Standard Tasks in this project.'),
-          ..._tasks
-              .where(
-                (task) =>
-                    task.projectId == _projectId && !task.isIndividualActivity,
-              )
-              .map(
-                (task) => CheckboxListTile(
-                  contentPadding: EdgeInsets.zero,
-                  value: _dependencies.contains(task.id),
-                  title: Text(task.title),
-                  subtitle: Text(task.status.label),
-                  onChanged: (value) => setState(() {
-                    if (value == true) {
-                      _dependencies.add(task.id);
-                    } else {
-                      _dependencies.remove(task.id);
-                    }
-                  }),
+          if (!personal) ...[
+            const Divider(height: 28),
+            const Text(
+              'Dependencies',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            if (_tasks
+                .where(
+                  (task) =>
+                      task.projectId == _projectId &&
+                      !task.isIndividualActivity,
+                )
+                .isEmpty)
+              const Text('No existing Standard Tasks in this project.'),
+            ..._tasks
+                .where(
+                  (task) =>
+                      task.projectId == _projectId &&
+                      !task.isIndividualActivity,
+                )
+                .map(
+                  (task) => CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: _dependencies.contains(task.id),
+                    title: Text(task.title),
+                    subtitle: Text(task.status.label),
+                    onChanged: (value) => setState(() {
+                      if (value == true) {
+                        _dependencies.add(task.id);
+                      } else {
+                        _dependencies.remove(task.id);
+                      }
+                    }),
+                  ),
                 ),
-              ),
+          ],
           const Divider(height: 28),
           DropdownButtonFormField<String>(
             initialValue: _recurrence,

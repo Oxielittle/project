@@ -4,6 +4,7 @@ import 'package:project/models/activity_assignment.dart';
 import 'package:project/models/task_item.dart';
 import 'package:project/pages/ActivityDetailsPage.dart';
 import 'package:project/pages/CreateTaskPage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 TaskItem activityTask() => TaskItem(
   id: 'activity-1',
@@ -24,9 +25,14 @@ TaskItem activityTask() => TaskItem(
 );
 
 void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues({'auth_user': '{"role":"manager"}'});
+  });
   testWidgets('task type selector reveals individual activity fields', (
     tester,
   ) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
       MaterialApp(
         home: CreateTaskPage(
@@ -36,6 +42,7 @@ void main() {
         ),
       ),
     );
+    await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('task-type-selector')), findsOneWidget);
     expect(find.byKey(const Key('recipient-picker')), findsNothing);
@@ -66,6 +73,7 @@ void main() {
         ),
       ),
     );
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.text('Task options'),
       500,

@@ -11,4 +11,13 @@ const dependencyBlockMessage = (status, incompleteCount) =>
     ? `This task is blocked by ${incompleteCount} incomplete dependency task(s).`
     : null;
 
-module.exports = { shiftDate, dependencyBlockMessage };
+const personalTaskDateError = (body, current = {}) => {
+  const start = body.startDate !== undefined ? body.startDate : current.startDate;
+  const deadline = body.deadline !== undefined ? body.deadline : current.deadline;
+  const reminder = body.reminderAt !== undefined ? body.reminderAt : current.reminderAt;
+  if (start && deadline && new Date(deadline) < new Date(start)) return 'Deadline cannot be before the start date.';
+  if (reminder && deadline && new Date(reminder) > new Date(deadline)) return 'Reminder cannot be after the deadline.';
+  return null;
+};
+
+module.exports = { shiftDate, dependencyBlockMessage, personalTaskDateError };

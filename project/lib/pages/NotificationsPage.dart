@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 
 class NotificationsPage extends StatefulWidget {
-  const NotificationsPage({super.key});
+  const NotificationsPage({super.key, this.onUnreadChanged});
+  final ValueChanged<int>? onUnreadChanged;
   @override
   State<NotificationsPage> createState() => _NotificationsPageState();
 }
@@ -24,6 +25,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
       if (mounted)
         setState(() {
           items = d['items'];
+          widget.onUnreadChanged?.call(
+            items.where((item) => item['isRead'] != true).length,
+          );
           loading = false;
           error = null;
         });

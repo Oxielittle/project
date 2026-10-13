@@ -25,6 +25,7 @@ class _AppShellState extends State<AppShell> {
   bool _loading = true;
   String? _error;
   bool _canManage = false;
+  int _unreadCount = 0;
   final _realtime = RealtimeService();
 
   @override
@@ -32,7 +33,11 @@ class _AppShellState extends State<AppShell> {
     super.initState();
     _loadRole();
     _loadTasks();
-    _realtime.connect(_loadTasks);
+    _loadUnread();
+    _realtime.connect(() {
+      _loadTasks();
+      _loadUnread();
+    });
   }
 
   @override
@@ -79,6 +84,19 @@ class _AppShellState extends State<AppShell> {
     }
   }
 
+  Future<void> _loadUnread() async {
+    try {
+      final data = await ApiClient.get('/notifications');
+      final items = data['items'] as List? ?? const [];
+      if (mounted)
+        setState(
+          () => _unreadCount = items
+              .where((item) => item['isRead'] != true)
+              .length,
+        );
+    } catch (_) {}
+  }
+
   void _addTask(TaskItem task) {
     setState(() {
       _tasks.insert(0, task);
@@ -118,7 +136,12 @@ class _AppShellState extends State<AppShell> {
         onStatusChanged: _updateTaskStatus,
         onRefresh: _loadTasks,
       ),
-      const NotificationsPage(),
+      NotificationsPage(
+        onUnreadChanged: (value) {
+          if (mounted && value != _unreadCount)
+            setState(() => _unreadCount = value);
+        },
+      ),
       const ProfilePage(),
     ];
 
@@ -149,7 +172,7 @@ class _AppShellState extends State<AppShell> {
           child: IndexedStack(index: _selectedIndex, children: pages),
         ),
       ),
-      floatingActionButton: _selectedIndex == 2 && _canManage
+      floatingActionButton: _selectedIndex == 2
           ? FloatingActionButton.extended(
               onPressed: _openCreateTask,
               icon: const Icon(Icons.add),
@@ -160,7 +183,7 @@ class _AppShellState extends State<AppShell> {
         selectedIndex: _selectedIndex,
         onDestinationSelected: (index) =>
             setState(() => _selectedIndex = index),
-        destinations: const [
+        destinations: [
           NavigationDestination(
             icon: Icon(Icons.home_outlined),
             selectedIcon: Icon(Icons.home),
@@ -177,8 +200,16 @@ class _AppShellState extends State<AppShell> {
             label: 'Tasks',
           ),
           NavigationDestination(
-            icon: Icon(Icons.notifications_outlined),
-            selectedIcon: Icon(Icons.notifications),
+            icon: Badge(
+              isLabelVisible: _unreadCount > 0,
+              label: Text(_unreadCount > 99 ? '99+' : '$_unreadCount'),
+              child: const Icon(Icons.notifications_outlined),
+            ),
+            selectedIcon: Badge(
+              isLabelVisible: _unreadCount > 0,
+              label: Text(_unreadCount > 99 ? '99+' : '$_unreadCount'),
+              child: const Icon(Icons.notifications),
+            ),
             label: 'Alerts',
           ),
           NavigationDestination(

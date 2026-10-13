@@ -12,7 +12,10 @@ class TaskService {
           .map((e) => TaskItem.fromJson(Map<String, dynamic>.from(e)))
           .toList();
   static Future<void> updateStatus(TaskItem task, TaskStatus status) async =>
-      ApiClient.patch('/tasks/${task.id}', {'status': status.api});
+      ApiClient.patch(
+        task.isPersonal ? '/personal-tasks/${task.id}' : '/tasks/${task.id}',
+        {'status': status.api},
+      );
   static Future<List<Map<String, dynamic>>> projects() async =>
       List<Map<String, dynamic>>.from(
         (await ApiClient.get('/projects'))['items'],
@@ -25,6 +28,26 @@ class TaskService {
           (await ApiClient.post('/tasks', body))['item'],
         ),
       );
+  static Future<TaskItem> createPersonal(Map<String, dynamic> body) async =>
+      TaskItem.fromJson(
+        Map<String, dynamic>.from(
+          (await ApiClient.post('/personal-tasks', body))['item'],
+        ),
+      );
+  static Future<TaskItem> updatePersonal(
+    String id,
+    Map<String, dynamic> body,
+  ) async => TaskItem.fromJson(
+    Map<String, dynamic>.from(
+      (await ApiClient.patch('/personal-tasks/$id', body))['item'],
+    ),
+  );
+  static Future<void> reopenPersonal(String id) async =>
+      ApiClient.patch('/personal-tasks/$id/reopen', const {});
+  static Future<void> archivePersonal(String id, bool value) async =>
+      ApiClient.patch('/personal-tasks/$id/archive', {'archived': value});
+  static Future<void> deletePersonal(String id) async =>
+      ApiClient.delete('/personal-tasks/$id');
   static Future<TaskItem> createActivity(Map<String, dynamic> body) async =>
       TaskItem.fromJson(
         Map<String, dynamic>.from(

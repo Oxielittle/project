@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/task_item.dart';
 import '../services/api_client.dart';
+import '../services/session_service.dart';
 
 class ArchivePage extends StatefulWidget {
   const ArchivePage({super.key});
@@ -31,8 +32,12 @@ class _ArchivePageState extends State<ArchivePage>
 
   Future<void> load() async {
     try {
+      final role = await SessionService.role();
       final results = await Future.wait([
-        ApiClient.get('/projects?archived=true'),
+        if (role != 'member')
+          ApiClient.get('/projects?archived=true')
+        else
+          Future.value({'items': []}),
         ApiClient.get('/tasks?archived=true'),
       ]);
       if (mounted)
@@ -54,7 +59,11 @@ class _ArchivePageState extends State<ArchivePage>
   }
 
   Future<void> restore(String type, String id) async {
-    await ApiClient.patch('/$type/$id', {'isArchived': false});
+    if (type == 'personal-tasks') {
+      await ApiClient.patch('/personal-tasks/$id/archive', {'archived': false});
+    } else {
+      await ApiClient.patch('/$type/$id', {'isArchived': false});
+    }
     await load();
   }
 
@@ -96,7 +105,17 @@ class _ArchivePageState extends State<ArchivePage>
                     )
                     .toList(),
               ),
-              _list(tasks.map((t) => (t.id, t.title, 'tasks')).toList()),
+              _list(
+                tasks
+                    .map(
+                      (t) => (
+                        t.id,
+                        t.title,
+                        t.isPersonal ? 'personal-tasks' : 'tasks',
+                      ),
+                    )
+                    .toList(),
+              ),
             ],
           ),
   );

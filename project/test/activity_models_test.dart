@@ -66,4 +66,22 @@ void main() {
     expect(task.dependencies.single['title'], 'First task');
     expect(task.recurrence['frequency'], 'weekly');
   });
+
+  test('parses a private personal task without a project', () {
+    final task = TaskItem.fromJson({
+      '_id': 'personal-1',
+      'title': 'Remember report',
+      'scope': 'personal',
+      'owner': 'user-1',
+      'assignee': {'_id': 'user-1', 'firstName': 'Jan'},
+      'priority': 'medium',
+      'status': 'todo',
+      'deadline': '2026-10-20T00:00:00.000Z',
+      'reminderAt': '2026-10-19T12:00:00.000Z',
+    });
+    expect(task.isPersonal, isTrue);
+    expect(task.project, 'Personal');
+    expect(task.ownerId, 'user-1');
+    expect(task.reminderAt, isNotNull);
+  });
 }

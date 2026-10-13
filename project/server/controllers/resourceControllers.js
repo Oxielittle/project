@@ -8,19 +8,40 @@ const Notification = require('../models/notificationModel');
 const Activity = require('../models/activityLogModel');
 const { logActivity } = require('../services/activity');
 const { notify } = require('../services/notifications');
-const { emitAll } = require('../services/events');
+const { emitAll, emitToUser } = require('../services/events');
 const fs = require('fs');
 const path = require('path');
-const { shiftDate, dependencyBlockMessage } = require('../services/taskRules');
+const { shiftDate, dependencyBlockMessage, personalTaskDateError } = require('../services/taskRules');
 
 const visibleTaskQuery = async (user) => {
-  if (user.role === 'admin') return {};
+  const ownPersonal = { scope: 'personal', owner: user._id };
+  if (user.role === 'admin') return { $or: [{ scope: { $ne: 'personal' } }, ownPersonal] };
   const activityIds = await ActivityAssignment.find({ recipient: user._id }).distinct('activity');
   if (user.role === 'manager') {
     const managedProjects = await Project.find({ manager: user._id }).distinct('_id');
-    return { $or: [{ reporter: user._id }, { assignee: user._id }, { collaborators: user._id }, { watchers: user._id }, { _id: { $in: activityIds } }, { project: { $in: managedProjects } }] };
+    return { $or: [ownPersonal, { scope: { $ne: 'personal' }, reporter: user._id }, { scope: { $ne: 'personal' }, assignee: user._id }, { scope: { $ne: 'personal' }, collaborators: user._id }, { scope: { $ne: 'personal' }, watchers: user._id }, { _id: { $in: activityIds } }, { scope: { $ne: 'personal' }, project: { $in: managedProjects } }] };
   }
-  return { $or: [{ assignee: user._id }, { collaborators: user._id }, { watchers: user._id }, { _id: { $in: activityIds } }] };
+  return { $or: [ownPersonal, { scope: { $ne: 'personal' }, assignee: user._id }, { scope: { $ne: 'personal' }, collaborators: user._id }, { scope: { $ne: 'personal' }, watchers: user._id }, { _id: { $in: activityIds } }] };
+};
+
+const sendPersonalReminders = async (userId) => {
+  const now = new Date();
+  const reminderItems = await Task.find({ scope: 'personal', owner: userId, isArchived: false, isCancelled: false, status: { $ne: 'completed' }, reminderAt: { $lte: now }, reminderNotifiedAt: null });
+  for (const item of reminderItems) {
+    await notify(userId, 'Personal task reminder', item.title, 'reminder', 'Task', item._id);
+    item.reminderNotifiedAt = now; await item.save();
+  }
+  const overdueItems = await Task.find({ scope: 'personal', owner: userId, isArchived: false, isCancelled: false, status: { $ne: 'completed' }, deadline: { $lt: now }, overdueNotifiedAt: null });
+  for (const item of overdueItems) {
+    await notify(userId, 'Personal task overdue', item.title, 'overdue', 'Task', item._id);
+    item.overdueNotifiedAt = now; await item.save();
+  }
+  const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  const dueSoonItems = await Task.find({ scope: 'personal', owner: userId, isArchived: false, isCancelled: false, status: { $ne: 'completed' }, deadline: { $gte: now, $lte: tomorrow }, dueSoonNotifiedAt: null });
+  for (const item of dueSoonItems) {
+    await notify(userId, 'Personal task due soon', item.title, 'deadline', 'Task', item._id);
+    item.dueSoonNotifiedAt = now; await item.save();
+  }
 };
 const list = (Model, populate = '') => async (req, res, next) => { try {
   const page = Math.max(Number(req.query.page) || 1, 1); const limit = Math.min(Number(req.query.limit) || 50, 100);
@@ -56,8 +77,9 @@ exports.createProject = async (req, res, next) => { try { const item = await Pro
 exports.updateProject = async (req, res, next) => { try { const query = req.user.role === 'admin' ? { _id: req.params.id } : { _id: req.params.id, manager: req.user._id }; const item = await Project.findOneAndUpdate(query, req.body, { new: true, runValidators: true }); if (!item) return res.status(403).json({ message: 'Only this project manager can update it.' }); await logActivity(req.user._id, 'UPDATE_PROJECT', 'Project', item._id); emitAll('project:changed', item); res.json({ item }); } catch (e) { next(e); } };
 exports.deleteProject = async (req, res, next) => { try { const item = await Project.findByIdAndDelete(req.params.id); await logActivity(req.user._id, 'DELETE_PROJECT', 'Project', req.params.id); res.json({ message: 'Project deleted.', item }); } catch (e) { next(e); } };
 exports.listTasks = async (req, res, next) => { try {
+  await sendPersonalReminders(req.user._id);
   const query = { ...await visibleTaskQuery(req.user), isArchived: req.query.archived === 'true' };
-  ['status', 'priority', 'project', 'assignee', 'type'].forEach((key) => { if (req.query[key]) query[key] = req.query[key]; });
+  ['status', 'priority', 'project', 'assignee', 'type', 'scope'].forEach((key) => { if (req.query[key]) query[key] = req.query[key]; });
   if (req.query.search) query.title = new RegExp(req.query.search, 'i');
   const items = await Task.find(query).populate('project assignee reporter collaborators watchers dependencies').sort(req.query.sort || '-createdAt');
   if (req.user.role !== 'admin') {
@@ -67,6 +89,63 @@ exports.listTasks = async (req, res, next) => { try {
     return res.json({ items: visibleItems, total: visibleItems.length });
   }
   res.json({ items, total: items.length });
+} catch (e) { next(e); } };
+
+exports.listPersonalTasks = async (req, res, next) => { try {
+  await sendPersonalReminders(req.user._id);
+  const query = { scope: 'personal', owner: req.user._id, isArchived: req.query.archived === 'true' };
+  const items = await Task.find(query).populate('owner assignee reporter').sort(req.query.sort || '-createdAt');
+  res.json({ items, total: items.length });
+} catch (e) { next(e); } };
+
+exports.createPersonalTask = async (req, res, next) => { try {
+  if (!String(req.body.title || '').trim()) return res.status(400).json({ message: 'Title is required.' });
+  const dateError = personalTaskDateError(req.body); if (dateError) return res.status(400).json({ message: dateError });
+  const recurrence = req.body.recurrence || { frequency: 'none', count: 1, interval: 1 };
+  const allowed = ['title', 'description', 'priority', 'status', 'startDate', 'deadline', 'reminderAt', 'tags', 'category', 'subtasks', 'recurrence'];
+  const clean = Object.fromEntries(Object.entries(req.body).filter(([key]) => allowed.includes(key)));
+  const base = { ...clean, type: 'standard', scope: 'personal', project: undefined, owner: req.user._id, reporter: req.user._id, assignee: req.user._id, collaborators: [], watchers: [], dependencies: [] };
+  const item = await Task.create(base);
+  const copies = [];
+  if (recurrence.frequency && recurrence.frequency !== 'none' && Number(recurrence.count) > 1) {
+    for (let index = 1; index < Math.min(Number(recurrence.count), 50); index++) {
+      const deadline = clean.deadline ? shiftDate(clean.deadline, recurrence.frequency, Number(recurrence.interval || 1), index) : undefined;
+      if (recurrence.endDate && deadline && deadline > new Date(recurrence.endDate)) break;
+      copies.push({ ...base, recurrenceParent: item._id, occurrenceDate: deadline, deadline, startDate: clean.startDate ? shiftDate(clean.startDate, recurrence.frequency, Number(recurrence.interval || 1), index) : undefined, reminderAt: clean.reminderAt ? shiftDate(clean.reminderAt, recurrence.frequency, Number(recurrence.interval || 1), index) : undefined });
+    }
+    if (copies.length) await Task.insertMany(copies);
+  }
+  await notify(req.user._id, 'Personal task created', item.title, 'personal-task', 'Task', item._id);
+  await logActivity(req.user._id, 'CREATE_PERSONAL_TASK', 'Task', item._id, { occurrences: copies.length + 1 });
+  emitToUser(String(req.user._id), 'task:changed', item);
+  res.status(201).json({ item: await item.populate('owner assignee reporter'), occurrences: copies.length + 1 });
+} catch (e) { next(e); } };
+
+exports.updatePersonalTask = async (req, res, next) => { try {
+  const before = await Task.findOne({ _id: req.params.id, scope: 'personal', owner: req.user._id });
+  if (!before) return res.status(404).json({ message: 'Personal task not found.' });
+  const dateError = personalTaskDateError(req.body, before); if (dateError) return res.status(400).json({ message: dateError });
+  const allowed = ['title', 'description', 'priority', 'status', 'startDate', 'deadline', 'reminderAt', 'tags', 'category', 'subtasks', 'progress'];
+  const changes = Object.fromEntries(Object.entries(req.body).filter(([key]) => allowed.includes(key)));
+  if (changes.status === 'completed') changes.completedAt = new Date();
+  if (changes.status && changes.status !== 'completed') changes.completedAt = null;
+  if (changes.reminderAt || changes.deadline) { changes.reminderNotifiedAt = null; changes.dueSoonNotifiedAt = null; changes.overdueNotifiedAt = null; }
+  const item = await Task.findByIdAndUpdate(before._id, { $set: changes }, { new: true, runValidators: true }).populate('owner assignee reporter');
+  await notify(req.user._id, changes.status === 'completed' ? 'Personal task completed' : 'Personal task updated', item.title, 'personal-task', 'Task', item._id);
+  emitToUser(String(req.user._id), 'task:changed', item); res.json({ item });
+} catch (e) { next(e); } };
+
+exports.reopenPersonalTask = async (req, res, next) => { req.body = { ...req.body, status: 'todo' }; return exports.updatePersonalTask(req, res, next); };
+exports.archivePersonalTask = async (req, res, next) => { try {
+  const item = await Task.findOneAndUpdate({ _id: req.params.id, scope: 'personal', owner: req.user._id }, { isArchived: req.body.archived !== false }, { new: true });
+  if (!item) return res.status(404).json({ message: 'Personal task not found.' });
+  emitToUser(String(req.user._id), 'task:changed', item); res.json({ item });
+} catch (e) { next(e); } };
+exports.deletePersonalTask = async (req, res, next) => { try {
+  const item = await Task.findOneAndDelete({ _id: req.params.id, scope: 'personal', owner: req.user._id });
+  if (!item) return res.status(404).json({ message: 'Personal task not found.' });
+  for (const attachment of item.attachments || []) fs.unlink(path.join(__dirname, '..', 'uploads', path.basename(attachment.url || '')), () => {});
+  emitToUser(String(req.user._id), 'task:deleted', { id: item._id }); res.json({ message: 'Personal task deleted.' });
 } catch (e) { next(e); } };
 exports.getTask = async (req, res, next) => { try { const item = await Task.findOne({ _id: req.params.id, ...await visibleTaskQuery(req.user) }).populate('project assignee reporter collaborators watchers dependencies'); if (!item) return res.status(404).json({ message: 'Task not found.' }); res.json({ item }); } catch (e) { next(e); } };
 
@@ -111,6 +190,7 @@ exports.createTask = async (req, res, next) => { try {
 
 exports.updateTask = async (req, res, next) => { try {
   const before = await Task.findOne({ _id: req.params.id, ...await visibleTaskQuery(req.user) }); if (!before) return res.status(404).json({ message: 'Task not found.' });
+  if (before.scope === 'personal') return exports.updatePersonalTask(req, res, next);
   if (before.type === 'individual-activity' && req.user.role === 'member') return res.status(403).json({ message: 'Use your individual assignment to update this activity.' });
   let changes = req.body;
   if (req.user.role === 'member') { if (String(before.assignee) !== String(req.user._id) && !(before.collaborators || []).map(String).includes(String(req.user._id))) return res.status(403).json({ message: 'Watchers cannot modify this task.' }); const allowed = ['status', 'subtasks', 'progress']; changes = Object.fromEntries(Object.entries(req.body).filter(([key]) => allowed.includes(key))); }
@@ -122,18 +202,22 @@ exports.updateTask = async (req, res, next) => { try {
   if (before.status !== item.status) { const recipients = [...new Set([item.assignee, ...(item.collaborators || []), ...(item.watchers || [])].filter(Boolean).map((value) => String(value._id || value)))]; await Promise.all(recipients.map((recipient) => notify(recipient, 'Task status updated', `${item.title}: ${item.status}`, 'status', 'Task', item._id))); }
   emitAll('task:changed', item); res.json({ item });
 } catch (e) { next(e); } };
-exports.deleteTask = async (req, res, next) => { try { const query = req.user.role === 'admin' ? { _id: req.params.id } : { _id: req.params.id, reporter: req.user._id }; const item = await Task.findOneAndDelete(query); if (!item) return res.status(403).json({ message: 'Only the creator or an administrator can delete this task.' }); if (item.type === 'individual-activity') await ActivityAssignment.deleteMany({ activity: item._id }); await logActivity(req.user._id, 'DELETE_TASK', 'Task', req.params.id); emitAll('task:deleted', { id: req.params.id }); res.json({ message: 'Task deleted.', item }); } catch (e) { next(e); } };
+exports.deleteTask = async (req, res, next) => { try { const query = req.user.role === 'admin' ? { _id: req.params.id, scope: { $ne: 'personal' } } : { _id: req.params.id, scope: { $ne: 'personal' }, reporter: req.user._id }; const item = await Task.findOneAndDelete(query); if (!item) return res.status(403).json({ message: 'Only the creator or an administrator can delete this task.' }); if (item.type === 'individual-activity') await ActivityAssignment.deleteMany({ activity: item._id }); await logActivity(req.user._id, 'DELETE_TASK', 'Task', req.params.id); emitAll('task:deleted', { id: req.params.id }); res.json({ message: 'Task deleted.', item }); } catch (e) { next(e); } };
 exports.addAttachment = async (req, res, next) => { try {
   if (!req.file) return res.status(400).json({ message: 'Choose a file to upload.' });
   const task = await Task.findOne({ _id: req.params.id, ...await visibleTaskQuery(req.user) });
   if (!task) return res.status(404).json({ message: 'Task not found.' });
+  if (task.scope === 'personal') {
+    const allowed = new Set(['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png', '.webp', '.txt', '.xls', '.xlsx']);
+    if (!allowed.has(path.extname(req.file.originalname).toLowerCase())) { fs.unlink(req.file.path, () => {}); return res.status(400).json({ message: 'Unsupported personal task attachment type.' }); }
+  }
   if (task.type === 'individual-activity' && req.user.role === 'member') { fs.unlink(req.file.path, () => {}); return res.status(403).json({ message: 'Upload files to your private activity assignment.' }); }
   if (task.type === 'standard' && req.user.role === 'member' && String(task.assignee) !== String(req.user._id) && !(task.collaborators || []).map(String).includes(String(req.user._id))) { fs.unlink(req.file.path, () => {}); return res.status(403).json({ message: 'Watchers cannot upload task files.' }); }
   const attachment = { name: req.file.originalname, url: `/uploads/${req.file.filename}`, mimeType: req.file.mimetype, size: req.file.size };
   task.attachments.push(attachment); await task.save();
   if (task.recurrence?.frequency && task.recurrence.frequency !== 'none' && !task.recurrenceParent) await Task.updateMany({ recurrenceParent: task._id }, { $push: { attachments: attachment } });
   await logActivity(req.user._id, 'ADD_ATTACHMENT', 'Task', task._id, { name: attachment.name });
-  emitAll('task:changed', task); res.status(201).json({ item: attachment, task });
+  if (task.scope === 'personal') emitToUser(String(req.user._id), 'task:changed', task); else emitAll('task:changed', task); res.status(201).json({ item: attachment, task });
 } catch (e) { next(e); } };
 exports.deleteAttachment = async (req, res, next) => { try {
   const task = await Task.findOne({ _id: req.params.id, ...await visibleTaskQuery(req.user) });
@@ -145,10 +229,10 @@ exports.deleteAttachment = async (req, res, next) => { try {
   const attachmentUrl = attachment.url, filename = path.basename(attachmentUrl); attachment.deleteOne(); await task.save();
   if (task.recurrence?.frequency && task.recurrence.frequency !== 'none' && !task.recurrenceParent) await Task.updateMany({ recurrenceParent: task._id }, { $pull: { attachments: { url: attachmentUrl } } });
   fs.unlink(path.join(__dirname, '..', 'uploads', filename), () => {});
-  emitAll('task:changed', task); res.json({ message: 'Attachment deleted.' });
+  if (task.scope === 'personal') emitToUser(String(req.user._id), 'task:changed', task); else emitAll('task:changed', task); res.json({ message: 'Attachment deleted.' });
 } catch (e) { next(e); } };
-exports.listComments = async (req, res, next) => { try { res.json({ items: await Comment.find({ task: req.params.taskId }).populate('author').sort('createdAt') }); } catch (e) { next(e); } };
-exports.createComment = async (req, res, next) => { try { const item = await Comment.create({ task: req.params.taskId, author: req.user._id, body: req.body.body }); await logActivity(req.user._id, 'COMMENT_TASK', 'Task', req.params.taskId); emitAll('comment:new', item); res.status(201).json({ item }); } catch (e) { next(e); } };
+exports.listComments = async (req, res, next) => { try { const task = await Task.findOne({ _id: req.params.taskId, ...await visibleTaskQuery(req.user) }); if (!task) return res.status(404).json({ message: 'Task not found.' }); res.json({ items: await Comment.find({ task: task._id }).populate('author').sort('createdAt') }); } catch (e) { next(e); } };
+exports.createComment = async (req, res, next) => { try { const task = await Task.findOne({ _id: req.params.taskId, ...await visibleTaskQuery(req.user) }); if (!task) return res.status(404).json({ message: 'Task not found.' }); const item = await Comment.create({ task: task._id, author: req.user._id, body: req.body.body }); await logActivity(req.user._id, 'COMMENT_TASK', 'Task', task._id); if (task.scope === 'personal') emitToUser(String(req.user._id), 'comment:new', item); else emitAll('comment:new', item); res.status(201).json({ item }); } catch (e) { next(e); } };
 exports.updateComment = async (req, res, next) => { try { const item = await Comment.findOneAndUpdate({ _id: req.params.id, author: req.user._id }, { body: req.body.body }, { new: true, runValidators: true }); if (!item) return res.status(404).json({ message: 'Comment not found.' }); res.json({ item }); } catch (e) { next(e); } };
 exports.deleteComment = async (req, res, next) => { try { const query = req.user.role === 'admin' ? { _id: req.params.id } : { _id: req.params.id, author: req.user._id }; const item = await Comment.findOneAndDelete(query); if (!item) return res.status(404).json({ message: 'Comment not found.' }); res.json({ message: 'Comment deleted.' }); } catch (e) { next(e); } };
 exports.notifications = async (req, res, next) => { try { res.json({ items: await Notification.find({ user: req.user._id }).sort('-createdAt') }); } catch (e) { next(e); } };

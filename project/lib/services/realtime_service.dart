@@ -21,6 +21,7 @@ class RealtimeService {
       'project:changed',
       'team:changed',
       'activity-assignment:changed',
+      'notification:new',
     ]) {
       _socket!.on(event, (_) => onChanged());
     }

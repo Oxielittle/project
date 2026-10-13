@@ -138,15 +138,18 @@ class _ProfilePageState extends State<ProfilePage> {
                 onTap: () => open(const ActivityPage()),
               ),
             ),
-          if (role == 'admin' || role == 'manager')
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.archive_outlined),
-                title: const Text('Archived records'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => open(const ArchivePage()),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.archive_outlined),
+              title: Text(
+                role == 'member'
+                    ? 'Archived personal tasks'
+                    : 'Archived records',
               ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => open(const ArchivePage()),
             ),
+          ),
           const SizedBox(height: 16),
           OutlinedButton.icon(
             onPressed: () async {
