@@ -89,6 +89,25 @@ class AuthService {
     return data;
   }
 
+  static Future<Map<String, dynamic>> uploadAvatar(
+    List<int> bytes,
+    String filename,
+  ) async {
+    final data = Map<String, dynamic>.from(
+      await ApiClient.upload('/auth/me/avatar', bytes, filename),
+    );
+    await SessionService.saveUser(Map<String, dynamic>.from(data['user']));
+    return data;
+  }
+
+  static Future<Map<String, dynamic>> removeAvatar() async {
+    final data = Map<String, dynamic>.from(
+      await ApiClient.delete('/auth/me/avatar'),
+    );
+    await SessionService.saveUser(Map<String, dynamic>.from(data['user']));
+    return data;
+  }
+
   static Future<void> changePassword(
     String currentPassword,
     String newPassword,

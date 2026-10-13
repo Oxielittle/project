@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../services/session_service.dart';
 import '../services/api_client.dart';
+import '../services/api_config.dart';
 import '../services/theme_service.dart';
 import 'ActivityPage.dart';
 import 'AdminUsersPage.dart';
@@ -45,6 +46,12 @@ class _ProfilePageState extends State<ProfilePage> {
     final role = user?['role'] ?? 'member';
     final name = '${user?['firstName'] ?? ''} ${user?['lastName'] ?? ''}'
         .trim();
+    final storedAvatar = (user?['avatarUrl'] ?? '').toString();
+    final avatarSource = storedAvatar.isEmpty
+        ? null
+        : storedAvatar.startsWith('http')
+        ? storedAvatar
+        : '${ApiConfig.origin}$storedAvatar';
     return Scaffold(
       appBar: AppBar(title: const Text('Profile')),
       body: ListView(
@@ -52,10 +59,15 @@ class _ProfilePageState extends State<ProfilePage> {
         children: [
           CircleAvatar(
             radius: 46,
-            child: Text(
-              name.isEmpty ? 'U' : name[0].toUpperCase(),
-              style: const TextStyle(fontSize: 34),
-            ),
+            foregroundImage: avatarSource == null
+                ? null
+                : NetworkImage(avatarSource),
+            child: avatarSource == null
+                ? Text(
+                    name.isEmpty ? 'U' : name[0].toUpperCase(),
+                    style: const TextStyle(fontSize: 34),
+                  )
+                : null,
           ),
           const SizedBox(height: 14),
           Center(
