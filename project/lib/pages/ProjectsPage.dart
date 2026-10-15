@@ -14,6 +14,7 @@ class ProjectsPage extends StatefulWidget {
 
 class _ProjectsPageState extends State<ProjectsPage> {
   List<dynamic> projects = [];
+  List<dynamic> teams = [];
   List<dynamic> users = [];
   bool loading = true;
   String? error;
@@ -29,12 +30,14 @@ class _ProjectsPageState extends State<ProjectsPage> {
       final results = await Future.wait([
         ApiClient.get('/projects'),
         if (widget.canManage) ApiClient.get('/users'),
+        if (widget.canManage) ApiClient.get('/teams'),
       ]);
       final data = results.first;
       if (mounted)
         setState(() {
           projects = data['items'];
           users = widget.canManage ? results[1]['items'] ?? [] : [];
+          teams = widget.canManage ? results[2]['items'] ?? [] : [];
           loading = false;
           error = null;
         });
@@ -58,6 +61,10 @@ class _ProjectsPageState extends State<ProjectsPage> {
             member is Map ? member['_id'].toString() : member.toString(),
       ),
     };
+    final teamValue = project?['team'];
+    String? selectedTeamId = teamValue is Map
+        ? teamValue['_id']?.toString()
+        : teamValue?.toString();
     final save =
         await showDialog<bool>(
           context: context,
@@ -72,6 +79,50 @@ class _ProjectsPageState extends State<ProjectsPage> {
                     decoration: const InputDecoration(
                       labelText: 'Project name',
                     ),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String?>(
+                    initialValue: selectedTeamId,
+                    decoration: const InputDecoration(
+                      labelText: 'Team (optional)',
+                      helperText: 'Selecting a team adds all of its members.',
+                    ),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('Select members manually'),
+                      ),
+                      ...teams.map(
+                        (team) => DropdownMenuItem<String?>(
+                          value: team['_id'].toString(),
+                          child: Text(team['name'] ?? 'Team'),
+                        ),
+                      ),
+                    ],
+                    onChanged: (value) => setDialogState(() {
+                      selectedTeamId = value;
+                      if (value == null) return;
+                      final team = teams.firstWhere(
+                        (item) => item['_id'].toString() == value,
+                      );
+                      selectedMembers
+                        ..clear()
+                        ..addAll(
+                          (team['members'] as List? ?? const []).map(
+                            (member) => member is Map
+                                ? member['_id'].toString()
+                                : member.toString(),
+                          ),
+                        );
+                      final manager = team['manager'];
+                      if (manager != null) {
+                        selectedMembers.add(
+                          manager is Map
+                              ? manager['_id'].toString()
+                              : manager.toString(),
+                        );
+                      }
+                    }),
                   ),
                   const SizedBox(height: 12),
                   Align(
@@ -94,11 +145,13 @@ class _ProjectsPageState extends State<ProjectsPage> {
                                 .trim(),
                           ),
                           selected: selectedMembers.contains(id),
-                          onSelected: (selected) => setDialogState(
-                            () => selected
-                                ? selectedMembers.add(id)
-                                : selectedMembers.remove(id),
-                          ),
+                          onSelected: selectedTeamId != null
+                              ? null
+                              : (selected) => setDialogState(
+                                  () => selected
+                                      ? selectedMembers.add(id)
+                                      : selectedMembers.remove(id),
+                                ),
                         );
                       }).toList(),
                     ),
@@ -131,6 +184,7 @@ class _ProjectsPageState extends State<ProjectsPage> {
         'description': description.text.trim(),
         'status': 'active',
         'members': selectedMembers.toList(),
+        'team': selectedTeamId,
       };
       if (project == null) {
         await ApiClient.post('/projects', body);
@@ -236,17 +290,15 @@ class _ProjectsPageState extends State<ProjectsPage> {
       );
     }
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Projects'),
-        actions: [
-          if (widget.canManage)
-            IconButton(
+      appBar: AppBar(title: const Text('Projects')),
+      body: body,
+      floatingActionButton: widget.canManage
+          ? FloatingActionButton.extended(
               onPressed: () => showForm(),
               icon: const Icon(Icons.add),
-            ),
-        ],
-      ),
-      body: body,
+              label: const Text('New project'),
+            )
+          : null,
     );
   }
 }

@@ -6,6 +6,7 @@ const taskSchema = new mongoose.Schema({
   title: { type: String, required: true, trim: true },
   description: { type: String, default: '' },
   project: { type: mongoose.Schema.Types.ObjectId, ref: 'Project', required: function () { return this.scope !== 'personal'; } },
+  team: { type: mongoose.Schema.Types.ObjectId, ref: 'Team' },
   assignee: { type: mongoose.Schema.Types.ObjectId, ref: 'Auth' },
   collaborators: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Auth' }],
   watchers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Auth' }],

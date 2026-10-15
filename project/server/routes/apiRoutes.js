@@ -8,6 +8,7 @@ router.use(protect);
 router.get('/users', allow('admin', 'manager'), c.users);
 router.patch('/users/:id', allow('admin'), c.updateUser);
 router.get('/teams', c.listTeams);
+router.get('/teams/:id/overview', c.teamOverview);
 router.post('/teams', allow('admin', 'manager'), c.createTeam);
 router.patch('/teams/:id', allow('admin', 'manager'), c.updateTeam);
 router.patch('/teams/:id/members', allow('admin', 'manager'), c.setTeamMembers);

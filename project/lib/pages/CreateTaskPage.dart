@@ -40,6 +40,7 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
   String? _projectId, _assigneeId;
   bool _loading = true, _saving = false, _isActivity = false;
   bool _isPersonal = true;
+  bool _assignTeam = false;
   String _role = 'admin';
   bool _allowText = true, _requireAttachment = false, _allowResubmission = true;
   int _maxSubmissions = 3, _maxFileSize = 10, _maximumScore = 100;
@@ -132,6 +133,17 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
       return members.contains(user['_id'].toString()) &&
           (query.isEmpty || name.contains(query));
     }).toList();
+  }
+
+  String? get _selectedTeamId {
+    final team = _selectedProject?['team'];
+    if (team == null) return null;
+    return team is Map ? team['_id']?.toString() : team.toString();
+  }
+
+  String get _selectedTeamName {
+    final team = _selectedProject?['team'];
+    return team is Map ? (team['name'] ?? 'Project team').toString() : 'Project team';
   }
 
   Future<void> _pickDate(bool start) async {
@@ -240,6 +252,8 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
           : await TaskService.create({
               ...common,
               'assignee': _assigneeId,
+              if (_assignTeam && _selectedTeamId != null)
+                'team': _selectedTeamId,
               'collaborators': _collaborators.toList(),
               'watchers': _watchers.toList(),
               'subtasks': _subtasks
@@ -394,6 +408,7 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
               onChanged: (value) => setState(() {
                 _projectId = value;
                 _assigneeId = null;
+                _assignTeam = false;
                 _recipients.clear();
                 _dependencies.clear();
               }),
@@ -409,21 +424,36 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
           else if (_isActivity)
             _recipientPicker()
           else
-            DropdownButtonFormField<String>(
-              initialValue: _assigneeId,
-              decoration: const InputDecoration(
-                labelText: 'Assignee',
-                prefixIcon: Icon(Icons.person_outline),
-              ),
-              items: _eligibleUsers
-                  .map(
-                    (u) => DropdownMenuItem(
-                      value: u['_id'].toString(),
-                      child: Text(_name(u)),
+            Column(
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: _assigneeId,
+                  decoration: const InputDecoration(
+                    labelText: 'Primary assignee',
+                    prefixIcon: Icon(Icons.person_outline),
+                  ),
+                  items: _eligibleUsers
+                      .map(
+                        (u) => DropdownMenuItem(
+                          value: u['_id'].toString(),
+                          child: Text(_name(u)),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) => setState(() => _assigneeId = value),
+                ),
+                if (_selectedTeamId != null)
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    secondary: const Icon(Icons.groups_outlined),
+                    title: Text('Assign to $_selectedTeamName'),
+                    subtitle: const Text(
+                      'Every team member is added as a collaborator.',
                     ),
-                  )
-                  .toList(),
-              onChanged: (value) => setState(() => _assigneeId = value),
+                    value: _assignTeam,
+                    onChanged: (value) => setState(() => _assignTeam = value),
+                  ),
+              ],
             ),
           const SizedBox(height: 16),
           DropdownButtonFormField<TaskPriority>(

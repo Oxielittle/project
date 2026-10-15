@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../services/api_client.dart';
+import '../services/session_service.dart';
+import 'TeamDetailsPage.dart';
 
 class TeamsPage extends StatefulWidget {
   const TeamsPage({super.key});
@@ -13,6 +15,8 @@ class _TeamsPageState extends State<TeamsPage> {
   List<dynamic> teams = [];
   List<dynamic> users = [];
   bool loading = true;
+  String? currentUserId;
+  String role = 'member';
 
   @override
   void initState() {
@@ -22,14 +26,19 @@ class _TeamsPageState extends State<TeamsPage> {
 
   Future<void> load() async {
     try {
+      final sessionUser = await SessionService.user();
+      final sessionRole = sessionUser?['role']?.toString() ?? 'member';
       final results = await Future.wait([
         ApiClient.get('/teams'),
-        ApiClient.get('/users'),
+        if (sessionRole == 'admin' || sessionRole == 'manager')
+          ApiClient.get('/users'),
       ]);
       if (!mounted) return;
       setState(() {
         teams = results[0]['items'] ?? [];
-        users = results[1]['items'] ?? [];
+        users = results.length > 1 ? results[1]['items'] ?? [] : [];
+        currentUserId = (sessionUser?['id'] ?? sessionUser?['_id'])?.toString();
+        role = sessionRole;
         loading = false;
       });
     } catch (error) {
@@ -39,6 +48,13 @@ class _TeamsPageState extends State<TeamsPage> {
         context,
       ).showSnackBar(SnackBar(content: Text('Unable to load teams: $error')));
     }
+  }
+
+  bool canEdit(Map<String, dynamic> team) {
+    if (role == 'admin') return true;
+    final manager = team['manager'];
+    final managerId = manager is Map ? manager['_id'] : manager;
+    return role == 'manager' && managerId?.toString() == currentUserId;
   }
 
   Future<void> showTeamForm([Map<String, dynamic>? team]) async {
@@ -167,7 +183,7 @@ class _TeamsPageState extends State<TeamsPage> {
       appBar: AppBar(
         title: const Text('Teams'),
         actions: [
-          IconButton(
+          if (role == 'admin' || role == 'manager') IconButton(
             onPressed: () => showTeamForm(),
             icon: const Icon(Icons.group_add_outlined),
           ),
@@ -192,9 +208,17 @@ class _TeamsPageState extends State<TeamsPage> {
                       ),
                       title: Text(team['name'] ?? 'Team'),
                       subtitle: Text('${members.length} members'),
-                      trailing: IconButton(
-                        onPressed: () => showTeamForm(team),
-                        icon: const Icon(Icons.edit_outlined),
+                      trailing: canEdit(team)
+                          ? IconButton(
+                              onPressed: () => showTeamForm(team),
+                              icon: const Icon(Icons.edit_outlined),
+                            )
+                          : const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => TeamDetailsPage(team: team),
+                        ),
                       ),
                     ),
                   );
